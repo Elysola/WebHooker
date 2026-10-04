@@ -232,9 +232,7 @@
                   <div
                     class="flex items-center justify-between pt-2 border-t border-border/70 text-xs"
                   >
-                    <span class="text-faint text-[11px]">{{
-                      t("group.routesIn", { name: "" }).replace(/[\s:：]/g, "")
-                    }}</span>
+                    <span class="text-faint text-[11px]">{{ t("overview.routes") }}</span>
                     <span
                       class="inline-flex items-center gap-1 font-semibold text-accent hover:underline"
                     >
