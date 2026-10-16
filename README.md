@@ -107,7 +107,7 @@ Routes are stored in D1 (`d1_routes`, seeded from legacy KV `config:routes` on f
 
 ### Web UI (`/admin`)
 
-The built-in config console lets you manage routes and groups in the browser (add / edit / delete / toggle / reorder), inspect send logs, manage group members and invite links, and read the audit log — no KV access needed:
+The built-in config console lets you manage routes and groups in the browser (add / edit / delete / toggle / drag to reorder — the saved order is the evaluation order), inspect send logs, manage group members and invite links, and read the audit log — no KV access needed:
 
 1. Set `ADMIN_USER_IDS` to the GitHub user IDs (or logins) allowed to manage the console, e.g. `ADMIN_USER_IDS=12345,RhenCloud`.
 2. Visit `/admin` and sign in with GitHub. Users with no access get `403` — unless `ALLOW_SELF_SIGNUP=1` (they receive a personal group) or they follow a group invite link.

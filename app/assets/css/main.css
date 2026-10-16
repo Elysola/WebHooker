@@ -290,6 +290,8 @@
 
   .route-card {
     @apply block animate-rise rounded-xl border border-border bg-surface px-4 py-3 shadow-xs transition-all duration-150;
+    /* Only the entry delay keeps the hidden state: inline transforms (drag) must win afterwards. */
+    animation-fill-mode: backwards;
   }
 
   .route-card:hover {
@@ -412,6 +414,52 @@
 
   .route-target-id {
     @apply min-w-0 truncate font-mono text-[11.5px] text-text;
+  }
+
+  /* ---- Route reordering ---- */
+  .route-handle {
+    @apply grid h-9 w-9 cursor-grab place-items-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-text;
+    touch-action: none;
+  }
+
+  .route-handle:disabled {
+    @apply cursor-not-allowed opacity-40 hover:bg-transparent;
+  }
+
+  .route-handle:focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+
+  .route-list.is-reordering .route-card {
+    @apply select-none;
+  }
+
+  .route-list.is-dragging .route-card {
+    transition: transform 180ms ease;
+  }
+
+  .route-list.is-dragging .route-handle {
+    @apply cursor-grabbing;
+  }
+
+  .route-list .route-card.is-dragged {
+    @apply relative z-10 border-accent shadow-lg;
+    transition: none;
+  }
+
+  .route-list .route-card.is-dragged.is-settling {
+    transition: transform 150ms ease;
+  }
+
+  .route-list.is-committing .route-card {
+    transition: none !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .route-list.is-dragging .route-card,
+    .route-list .route-card.is-dragged.is-settling {
+      transition: none;
+    }
   }
 
   /* ---- Toggle switch ---- */

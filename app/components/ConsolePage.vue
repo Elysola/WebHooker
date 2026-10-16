@@ -49,7 +49,7 @@
             ><Languages :size="15" />{{ t("app.langToggle") }}</RcButton
           >
           <RcButton
-            v-if="!needLogin && selectedGroup && canEditRoutes(selectedGroup.id)"
+            v-if="!needLogin && selectedGroup && canEditRoutes(selectedGroup.id) && !reordering"
             @click="openNew"
             ><Plus :size="16" />{{ t("app.newRoute") }}</RcButton
           >
@@ -101,28 +101,53 @@
                 >
                 <p>{{ t("group.routesIn", { name: selectedGroup.name }) }}</p>
               </div>
-              <RcBadge :variant="groupRoutesLoading ? 'soft' : 'success'" size="sm" dot>{{
-                groupRoutes.length
-              }}</RcBadge>
+              <div class="console-context-actions">
+                <RcBadge :variant="groupRoutesLoading ? 'soft' : 'success'" size="sm" dot>{{
+                  groupRoutes.length
+                }}</RcBadge>
+                <template v-if="reordering">
+                  <RcButton
+                    variant="outline"
+                    color="neutral"
+                    size="sm"
+                    :disabled="savingOrder"
+                    @click="cancelReorder"
+                    >{{ t("routes.reorderCancel") }}</RcButton
+                  >
+                  <RcButton
+                    size="sm"
+                    :loading="savingOrder"
+                    :disabled="!orderChanged || reorderBusy"
+                    @click="saveOrder"
+                    ><Check :size="15" />{{ t("routes.reorderSave") }}</RcButton
+                  >
+                </template>
+                <RcButton
+                  v-else-if="canReorder"
+                  variant="outline"
+                  color="neutral"
+                  size="sm"
+                  :disabled="groupRoutesLoading || saving"
+                  @click="startReorder"
+                  ><ArrowUpDown :size="15" />{{ t("routes.reorder") }}</RcButton
+                >
+              </div>
+              <p v-if="reordering" class="console-reorder-hint">{{ t("routes.reorderHint") }}</p>
             </section>
 
             <p v-if="groupRoutesError" class="err">{{ groupRoutesError }}</p>
 
-            <section class="route-list">
-              <RouteCard
-                v-for="(r, i) in groupRoutes"
-                :key="r.id"
-                :route="r"
-                :at-first="i === 0"
-                :at-last="i === groupRoutes.length - 1"
-                :readonly="!canEditRoutes(selectedGroup.id)"
-                :style="{ animationDelay: i * 45 + 'ms' }"
-                @toggle="onToggle"
-                @edit="openEdit"
-                @delete="onDelete"
-                @move="onMove"
-              />
-            </section>
+            <RouteList
+              :routes="reordering ? orderDraft : groupRoutes"
+              :reordering="reordering"
+              :locked="savingOrder"
+              :readonly="!canEditRoutes(selectedGroup.id)"
+              @update:routes="orderDraft = $event"
+              @update:busy="reorderBusy = $event"
+              @toggle="onToggle"
+              @edit="openEdit"
+              @delete="onDelete"
+            />
 
             <section v-if="!groupRoutesLoading && !groupRoutes.length" class="console-empty">
               <RcEmptyState :title="t('routes.emptyGroup')">
@@ -325,6 +350,8 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  ArrowUpDown,
+  Check,
   ClipboardList,
   Gauge,
   Languages,
@@ -465,6 +492,22 @@ const groupEditorOpen = ref(false);
 const editingGroup = ref<Group | null>(null);
 const savingGroup = ref(false);
 
+/** Reorder mode: the draft order the user drags until it is saved or cancelled. */
+const reordering = ref(false);
+const orderDraft = ref<Route[]>([]);
+const savingOrder = ref(false);
+/** A dropped card is still settling; its new position is not in the draft yet. */
+const reorderBusy = ref(false);
+const orderChanged = computed(
+  () =>
+    orderDraft.value.length !== groupRoutes.value.length ||
+    orderDraft.value.some((r, i) => r.id !== groupRoutes.value[i]?.id),
+);
+const canReorder = computed(
+  () =>
+    !!selectedGroup.value && canEditRoutes(selectedGroup.value.id) && groupRoutes.value.length > 1,
+);
+
 const logFilterGroup = ref("");
 const auditFilterGroup = ref("");
 const metricsFilterGroup = ref("");
@@ -507,15 +550,65 @@ async function refreshOverview(): Promise<void> {
 }
 
 function enterGroup(group: Group): void {
+  cancelReorder();
   selectedGroup.value = group;
   groupRoutes.value = [];
   loadGroupRoutes(group.id);
 }
 
 function exitGroup(): void {
+  cancelReorder();
   selectedGroup.value = null;
   loadGroups();
 }
+
+function startReorder(): void {
+  if (groupRoutesLoading.value || saving.value) return;
+  orderDraft.value = [...groupRoutes.value];
+  reorderBusy.value = false;
+  reordering.value = true;
+}
+
+function cancelReorder(): void {
+  reordering.value = false;
+  reorderBusy.value = false;
+  orderDraft.value = [];
+}
+
+async function saveOrder(): Promise<void> {
+  const group = selectedGroup.value;
+  if (!group || !orderChanged.value || reorderBusy.value || savingOrder.value) return;
+  savingOrder.value = true;
+  try {
+    await saveGroupRoutes(group.id, orderDraft.value);
+    cancelReorder();
+    push(t("toast.orderSaved"));
+  } catch (err) {
+    push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
+  } finally {
+    savingOrder.value = false;
+  }
+}
+
+function onReorderKey(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || savingOrder.value || event.defaultPrevented) return;
+  // Escape closes an open dialog or list first (e.g. a member-removal
+  // confirmation); it must not also throw away the unsaved order.
+  const target = event.target instanceof Element ? event.target : null;
+  if (
+    target?.closest('[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]') ||
+    document.querySelector('[role="dialog"], [role="alertdialog"]')
+  )
+    return;
+  cancelReorder();
+}
+
+watch(reordering, (on) => {
+  if (on) window.addEventListener("keydown", onReorderKey);
+  else window.removeEventListener("keydown", onReorderKey);
+});
+
+onBeforeUnmount(() => window.removeEventListener("keydown", onReorderKey));
 
 function openNew(): void {
   editing.value = null;
@@ -549,22 +642,6 @@ async function onSave(route: Route): Promise<void> {
     push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
   } finally {
     saving.value = false;
-  }
-}
-
-async function onMove(route: Route, dir: -1 | 1): Promise<void> {
-  const group = selectedGroup.value;
-  if (!group) return;
-  const i = groupRoutes.value.findIndex((r) => r.id === route.id);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= groupRoutes.value.length) return;
-  const next = [...groupRoutes.value];
-  [next[i], next[j]] = [next[j]!, next[i]!];
-  try {
-    await saveGroupRoutes(group.id, next);
-  } catch (err) {
-    push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
-    loadGroupRoutes(group.id);
   }
 }
 
@@ -849,9 +926,10 @@ async function onDeleteGroup(group: Group): Promise<void> {
 }
 .console-context-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem 1rem;
   margin-bottom: 1rem;
   padding: 0.8rem 1rem;
   border: 1px solid rgb(var(--wh-border));
@@ -872,6 +950,17 @@ async function onDeleteGroup(group: Group): Promise<void> {
 .console-context-bar strong {
   font-size: 1.25rem;
   letter-spacing: -0.04em;
+}
+.console-context-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+.console-context-bar .console-reorder-hint {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  font-weight: 500;
 }
 .console-empty {
   padding: 4rem 1rem;

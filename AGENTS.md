@@ -37,8 +37,8 @@ app/                     # Vue 3 UI (Nuxt app dir)
 ├── assets/css/main.css  # Tailwind v4 entry: Elysola-compatible RGB aliases + bespoke layout classes + Vue transition glue
 ├── pages/               # index (landing), terms, privacy, admin/[...slug] (console SPA)
 ├── components/          # ConsolePage (sidebar shell + topbar), AdminHome (overview dashboard),
-│                        # RouteCard/Editor (RouteEditor has FilterNodeEditor AST builder + TagInput chips),
-│                        # GroupEditor, MembersPanel, WebhookPanel,
+│                        # RouteList (drag/keyboard reorder mode) + RouteCard, RouteEditor (FilterNodeEditor
+│                        # AST builder + TagInput chips), GroupEditor, MembersPanel, WebhookPanel,
 │                        # ConfirmDialog (app-wide destructive-action confirm), SendLogs, AuditLog, MetricsPanel,
 │                        # AppToasts, LegalLayout
 ├── composables/         # useI18n, useToasts, useConfirm (promise-based confirm), useGroups, useGroupRoutes, useFilterNode (AST helpers), useFragments, useLogs,

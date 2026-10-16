@@ -2,8 +2,21 @@
   <RcCard variant="outline" padding="none" :class="cardClass">
     <div class="route-row">
       <div class="route-lead">
+        <button
+          v-if="reordering"
+          type="button"
+          class="route-handle"
+          :data-route-handle="route.id"
+          :aria-label="t('routes.dragHandle', { name: displayName })"
+          :aria-describedby="hintId"
+          :disabled="locked"
+          @pointerdown="emit('dragStart', $event)"
+          @keydown="onHandleKey"
+        >
+          <GripVertical :size="16" />
+        </button>
         <RcSwitch
-          v-if="!readonly"
+          v-else-if="!readonly"
           :model-value="route.enabled"
           size="sm"
           @update:model-value="onToggle"
@@ -12,6 +25,7 @@
       </div>
 
       <div class="route-title">
+        <span v-if="reordering" class="route-position">{{ position }}</span>
         <span class="route-name">{{ displayName }}</span>
         <span class="route-id">{{ route.id }}</span>
       </div>
@@ -42,31 +56,7 @@
         }}</RcBadge>
       </div>
 
-      <div v-if="!readonly" class="route-actions">
-        <RcButton
-          type="button"
-          variant="ghost"
-          size="icon"
-          class="h-8 w-8 text-muted hover:text-text"
-          :disabled="atFirst"
-          :title="t('route.moveUp')"
-          :aria-label="t('route.moveUp')"
-          @click="emit('move', route, -1)"
-        >
-          <ChevronUp :size="15" />
-        </RcButton>
-        <RcButton
-          type="button"
-          variant="ghost"
-          size="icon"
-          class="h-8 w-8 text-muted hover:text-text"
-          :disabled="atLast"
-          :title="t('route.moveDown')"
-          :aria-label="t('route.moveDown')"
-          @click="emit('move', route, 1)"
-        >
-          <ChevronDown :size="15" />
-        </RcButton>
+      <div v-if="!readonly && !reordering" class="route-actions">
         <RcButton
           type="button"
           variant="ghost"
@@ -120,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-vue-next";
+import { GripVertical, Pencil, Trash2 } from "lucide-vue-next";
 import type { FilterNode, Route, RouteTarget } from "~/types";
 import { describeNode } from "~/composables/useFilterNode";
 
@@ -130,16 +120,23 @@ const { t } = useI18n();
 
 const props = defineProps<{
   route: Route;
-  atFirst?: boolean;
-  atLast?: boolean;
   readonly?: boolean;
+  /** Reorder mode: a drag handle replaces the switch and the actions hide. */
+  reordering?: boolean;
+  /** The new order is being saved: the handle waits until it is written. */
+  locked?: boolean;
+  /** 1-based position shown while reordering. */
+  position?: number;
+  /** Id of the element describing how to reorder (for the handle). */
+  hintId?: string;
 }>();
 
 const emit = defineEmits<{
   (e: "toggle", route: Route): void;
   (e: "edit", route: Route): void;
   (e: "delete", route: Route): void;
-  (e: "move", route: Route, dir: -1 | 1): void;
+  (e: "dragStart", event: PointerEvent): void;
+  (e: "nudge", dir: -1 | 1): void;
 }>();
 
 const displayName = computed(() => props.route.name || t("route.untitled"));
@@ -147,7 +144,10 @@ const summary = computed(() => {
   const node: FilterNode = props.route.ast ?? { all: props.route.filters };
   return describeNode(node, t);
 });
-const cardClass = computed(() => `route-card${props.route.enabled ? "" : " disabled"}`);
+const cardClass = computed(
+  () =>
+    `route-card${props.route.enabled ? "" : " disabled"}${props.reordering ? " is-reordering" : ""}`,
+);
 
 /** One tag per platform (in target order) with how many targets use it. */
 const platforms = computed(() => {
@@ -174,5 +174,12 @@ function platformLabel(platform: Platform): string {
 
 function onToggle(enabled: boolean): void {
   emit("toggle", { ...props.route, enabled });
+}
+
+function onHandleKey(event: KeyboardEvent): void {
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    event.preventDefault();
+    emit("nudge", event.key === "ArrowUp" ? -1 : 1);
+  }
 }
 </script>

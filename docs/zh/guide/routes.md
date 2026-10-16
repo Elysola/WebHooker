@@ -39,6 +39,10 @@
 | `discordRoleIds` | string[] | 否   | 路由触发时要提醒的 Discord 身份组 id；仅对 Discord 目标生效                           |
 | `ast`            | object   | 否   | 布尔过滤器树（`{all:[...]}` / `{any:[...]}` / `{not:{...}}`）；存在时优先于 `filters` |
 
+## 路由顺序
+
+路由按控制台中显示的顺序逐个分组评估。在分组页点击**调整顺序**，拖动路由左侧的手柄（或聚焦手柄后按 <kbd>↑</kbd> / <kbd>↓</kbd>），再点击**保存顺序**。顺序按分组保存在 D1（`d1_routes.position`，迁移 `0012`）；未执行该迁移的数据库会继续按 id 顺序加载路由。
+
 ## Discord 身份组提醒
 
 在路由上设置 `discordRoleIds` 可在其触发时提醒一个或多个 Discord 身份组（角色）。提醒（`<@&roleId>`）会加在路由所有 **Discord** 目标的消息内容前；Telegram 目标忽略该字段。只有当机器人拥有 `Mention Everyone` 权限（或身份组标记为可提及）且能看到该身份组时，提醒才会触发通知。

@@ -39,6 +39,10 @@ Each entry of `targets` is a push destination, so one route can forward to sever
 | `discordRoleIds` | string[] | No       | Discord role ids to ping when this route fires; applied to Discord targets only                                   |
 | `ast`            | object   | No       | Boolean filter tree (`{all:[...]}` / `{any:[...]}` / `{not:{...}}`); takes precedence over `filters` when present |
 
+## Route Order
+
+Routes are evaluated in the order the console shows them, group by group. To change it, click **Reorder** on the group page, drag routes by their handle (or focus a handle and press <kbd>↑</kbd> / <kbd>↓</kbd>), then **Save order**. The order is stored per group in D1 (`d1_routes.position`, migration `0012`); a database without that migration keeps loading routes in id order.
+
 ## Discord Role Mentions
 
 Set `discordRoleIds` on a route to ping one or more Discord roles (身份组) whenever that route fires. The mention (`<@&roleId>`) is prepended to the message content of every **Discord** target of the route; Telegram targets ignore this field. Mentions only trigger notifications when the bot has the `Mention Everyone` permission (or the role is marked mentionable), and the bot must be able to see the role.
