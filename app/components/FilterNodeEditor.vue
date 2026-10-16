@@ -23,6 +23,7 @@ const emit = defineEmits<{ (e: "remove"): void }>();
 
 const { t, locale } = useI18n();
 const { confirm } = useConfirm();
+const fieldId = `filter-node-${useId()}`;
 const scopeEvents = inject(
   FILTER_SCOPE_EVENTS,
   computed((): string[] => []),
@@ -141,7 +142,9 @@ async function remove(): Promise<void> {
       }"
     >
       <div class="leaf-type">
+        <label :for="`${fieldId}-type`" class="sr-only">{{ t("routeEditor.filterType") }}</label>
         <RcSelect
+          :id="`${fieldId}-type`"
           :model-value="node.leaf.type"
           :options="typeOptions"
           @update:model-value="setType"
@@ -158,7 +161,9 @@ async function remove(): Promise<void> {
         />
       </div>
       <div v-if="showOp" class="leaf-op">
+        <label :for="`${fieldId}-op`" class="sr-only">{{ t("routeEditor.op") }}</label>
         <RcSelect
+          :id="`${fieldId}-op`"
           :model-value="node.leaf.op"
           :options="opOptions"
           :title="t('routeEditor.op')"
