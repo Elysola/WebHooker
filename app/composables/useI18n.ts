@@ -337,6 +337,7 @@ const en: Dict = {
   "groupEditor.forgeSourcesHost": "git.example.com",
   "groupEditor.forgeSourcesName": "Optional display name",
   "groupEditor.forgeSourcesAdd": "+ Add host",
+  "groupEditor.forgeSourcesRemove": "Remove host",
   "groupEditor.forgeSourcesHint":
     "Events whose repository host matches an entry are labeled in the message footer with its display name (or the host when none is set) — e.g. git1.example.com and git2.example.com for two Gitea instances. GitHub events match github.com.",
   "groupEditor.errForgeSourceHost": "Every forge host must be a valid hostname",
@@ -745,6 +746,7 @@ const zh: Dict = {
   "groupEditor.forgeSourcesHost": "git.example.com",
   "groupEditor.forgeSourcesName": "可选显示名称",
   "groupEditor.forgeSourcesAdd": "+ 添加主机",
+  "groupEditor.forgeSourcesRemove": "删除主机",
   "groupEditor.forgeSourcesHint":
     "仓库主机与条目匹配的事件，会在消息底部用该条目的显示名称标注（未填名称则用主机名）——例如两个 Gitea 实例可分别填 git1.example.com 和 git2.example.com。GitHub 事件匹配 github.com。",
   "groupEditor.errForgeSourceHost": "每个来源主机必须是有效的主机名",
