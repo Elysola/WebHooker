@@ -37,6 +37,12 @@ export default defineNuxtConfig({
   },
   vite: {
     plugins: [tailwindcss()],
+    // `debug` and `extend` are CommonJS packages @elysola/ui's markdown stack
+    // (micromark, unified) imports; served unbundled in dev they lack a default
+    // export and the console fails to start.
+    optimizeDeps: {
+      include: ["debug", "extend"],
+    },
   },
   devtools: { enabled: false },
   runtimeConfig: {
