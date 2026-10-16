@@ -5,6 +5,7 @@ import { FILTER_SCOPE_EVENTS, blankNode, isBlankNode, nodeKey } from "~/composab
 import { FILTER_TYPES, FILTER_OPS } from "~/types";
 import type { FilterOp, FilterType } from "~/types";
 import {
+  convertValuesForOp,
   fieldPathOptions,
   isArrayFieldPath,
   validateFilterValue,
@@ -58,17 +59,24 @@ function validateValue(value: string): string | null {
   return validateFilterValue(props.node.leaf.type, props.node.leaf.op, value);
 }
 
+/** Switch the operator, swapping `/x/` ↔ `x` when moving to or from `regex`. */
+function changeOp(next: FilterOp): void {
+  const { leaf } = props.node;
+  leaf.values = convertValuesForOp(leaf.values, leaf.op, next);
+  leaf.op = next;
+}
+
 function setType(value: string): void {
   if ((FILTER_TYPES as readonly string[]).includes(value)) {
     props.node.leaf.type = value as FilterType;
     // Keyword filters have no operator; a hidden `exists` would drop their values.
-    if (value === "keyword") props.node.leaf.op = "eq";
+    if (value === "keyword") changeOp("eq");
   }
 }
 
 function setOp(value: string): void {
   if (FILTER_OPS.includes(value as FilterOp)) {
-    props.node.leaf.op = value as FilterOp;
+    changeOp(value as FilterOp);
     // `exists` hides the values input: its unadded text must not block saving.
     if (!showValues.value) props.node.leaf.draft = "";
   }
@@ -78,7 +86,7 @@ function setPath(value: string | string[]): void {
   props.node.leaf.path = typeof value === "string" ? value : "";
   // Paths ending on an array compare the whole array; `contains` matches an element.
   if (isArrayFieldPath(props.node.leaf.path) && props.node.leaf.op === "eq") {
-    props.node.leaf.op = "contains";
+    changeOp("contains");
   }
 }
 

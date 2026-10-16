@@ -2,17 +2,18 @@ import { describe, it, expect } from "bun:test";
 import {
   actionOptions,
   commaEndsValue,
-  splitFilterValues,
+  convertValuesForOp,
   eventOptions,
   fieldPathOptions,
   fieldValueOptions,
   isArrayFieldPath,
+  splitFilterValues,
   validateFilterValue,
   valueOptions,
 } from "../app/utils/filter-catalog";
-
+import { formToLeaf } from "../app/composables/useFilterNode";
 import { evaluateFilterNode } from "../server/lib/events/filter-ast";
-import type { WebhookEvent } from "../server/lib/types";
+import type { FilterOp, WebhookEvent } from "../server/lib/types";
 
 function values(opts: { value: string }[]): string[] {
   return opts.map((o) => o.value);
@@ -226,6 +227,86 @@ describe("splitFilterValues", () => {
 
   it("splits raw regex patterns on lines only", () => {
     expect(splitFilterValues("^v{1,3}$\n[a,b]", false)).toEqual(["^v{1,3}$", "[a,b]"]);
+  });
+});
+
+describe("convertValuesForOp", () => {
+  // Branch names and payload text, including line breaks and Unicode case
+  // variants (Kelvin sign, final sigma) that literal and regex comparisons fold
+  // differently.
+  const subjects = [
+    "main",
+    " main ",
+    "Main",
+    "mainline",
+    "release/v1",
+    "release/a\u2028b",
+    "build\nagent",
+    "please run ci\nthanks",
+    "\u212A",
+    "k",
+    "\u03C2",
+    "\u03A3",
+  ];
+  const actor = (login: string): WebhookEvent => ({
+    event: "push",
+    payload: { sender: { login } },
+  });
+  /** Subjects the condition matches once saved (the form trims every value). */
+  const matched = (op: FilterOp, value: string): string[] => {
+    const filter = formToLeaf({
+      type: "actor",
+      path: "",
+      op,
+      values: [value],
+      exclude: false,
+      draft: "",
+    });
+    return filter ? subjects.filter((s) => evaluateFilterNode(filter, actor(s))) : [];
+  };
+
+  it("swaps a wrapped regex and the raw regex, which match exactly the same", () => {
+    const cases: Array<[FilterOp, FilterOp, string, string]> = [
+      ["eq", "regex", "/^main/", "^main"],
+      ["ne", "regex", "/ci$/", "ci$"],
+      ["in", "regex", "/k/", "k"],
+      ["eq", "regex", "/\u03A3/", "\u03A3"],
+      ["regex", "eq", "^release/", "/^release//"],
+      ["regex", "in", "run ci", "/run ci/"],
+      ["regex", "eq", "/api/", "//api//"],
+    ];
+    for (const [from, to, value, expected] of cases) {
+      const [converted] = convertValuesForOp([value], from, to);
+      expect(converted).toBe(expected);
+      // `ne` negates per value; compare the value's own matches through `eq`.
+      const plain = (op: FilterOp): FilterOp => (op === "ne" ? "eq" : op);
+      expect(matched(plain(to), converted!)).toEqual(matched(plain(from), value));
+    }
+  });
+
+  it("keeps wrapped sources that saving would change", () => {
+    // Saving trims values: `/ main /` must not become `main`, nor `//` empty.
+    for (const value of ["/ main /", "/main /", "//"]) {
+      expect(convertValuesForOp([value], "eq", "regex")).toEqual([value]);
+    }
+    expect(matched("eq", "/ main /")).toEqual([" main "]);
+    expect(convertValuesForOp([" "], "regex", "eq")).toEqual([" "]);
+  });
+
+  it("keeps every other value as typed", () => {
+    // Literal, glob and substring values have no exact regex equivalent.
+    const values = ["main", "release/*", "*[bot]", "k"];
+    const pairs: Array<[FilterOp, FilterOp]> = [
+      ["eq", "regex"],
+      ["eq", "startsWith"],
+      ["contains", "eq"],
+      ["contains", "regex"],
+      ["gt", "eq"],
+      ["eq", "ne"],
+    ];
+    for (const [from, to] of pairs) expect(convertValuesForOp(values, from, to)).toEqual(values);
+    expect(convertValuesForOp(["/x/"], "eq", "contains")).toEqual(["/x/"]);
+    expect(convertValuesForOp(["^main"], "regex", "startsWith")).toEqual(["^main"]);
   });
 });
 

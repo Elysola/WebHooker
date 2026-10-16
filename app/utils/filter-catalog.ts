@@ -1199,6 +1199,38 @@ function typeValueOptions(
 }
 
 // ---------------------------------------------------------------------------
+// Operator changes
+// ---------------------------------------------------------------------------
+
+/** Operators whose values may be a wrapped `/regex/` (server `matchField`). */
+function readsWrappedRegex(op: FilterOp): boolean {
+  return op === "eq" || op === "ne" || op === "in";
+}
+
+/**
+ * Values rewritten for a new operator where the rewrite matches exactly the
+ * same: a wrapped `/x/` of the default operators and the raw `x` of `regex`
+ * compile to the same server regex, so they are swapped (`/^v\d+/` ↔
+ * `^v\d+`). Nothing else is rewritten — literal, glob and substring
+ * comparisons differ from regexes on line breaks and Unicode case folding —
+ * so other values stay as typed, and validation flags those that can never
+ * match. Saving trims every value, so a source that is empty or starts/ends
+ * with whitespace (`//`, `/ main /`) cannot stand alone and stays wrapped.
+ */
+export function convertValuesForOp(values: string[], from: FilterOp, to: FilterOp): string[] {
+  if (readsWrappedRegex(from) && to === "regex") {
+    return values.map((v) => {
+      const value = v.trim();
+      const source = value.slice(1, -1);
+      return isWrappedRegex(value) && source && source === source.trim() ? source : v;
+    });
+  }
+  if (from === "regex" && readsWrappedRegex(to))
+    return values.map((v) => (v.trim() ? `/${v.trim()}/` : v));
+  return values;
+}
+
+// ---------------------------------------------------------------------------
 // Validation (mirrors server/lib/events/filter-ast.ts)
 // ---------------------------------------------------------------------------
 
