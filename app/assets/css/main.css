@@ -213,26 +213,6 @@
     @apply px-6 py-3 text-sm;
   }
 
-  .icon-btn {
-    @apply grid h-[30px] w-[30px] place-items-center cursor-pointer rounded-sm border border-border bg-transparent text-[13px] text-muted transition-all duration-150;
-  }
-
-  .icon-btn:hover {
-    @apply border-accent bg-accent-dim text-accent;
-  }
-
-  .icon-btn:disabled {
-    @apply cursor-not-allowed opacity-35;
-  }
-
-  .icon-btn:disabled:hover {
-    @apply border-border bg-transparent text-muted;
-  }
-
-  .icon-btn.danger:hover {
-    @apply border-bad bg-bad-dim text-bad;
-  }
-
   /* ---- Cards ---- */
   .card {
     @apply animate-rise rounded border border-border bg-surface p-5 transition-[border-color,transform] duration-150;
@@ -608,10 +588,6 @@
 
   .editor-head h2 {
     @apply truncate text-base font-extrabold tracking-tight;
-  }
-
-  .editor-head .icon-btn {
-    @apply h-8 w-8 rounded-full;
   }
 
   .editor-body {
@@ -1021,64 +997,153 @@
     }
   }
 
+  /* ---- Filter tree editor ---- */
   .node-editor {
-    @apply mb-1;
+    container-type: inline-size;
   }
 
   .node-nested {
-    @apply ml-4 border-l border-border pl-3;
+    @apply ml-3 border-l border-border pl-2.5;
   }
 
+  @container (max-width: 26rem) {
+    .node-nested {
+      @apply ml-1 pl-1.5;
+    }
+  }
+
+  /*
+   * A condition: type · path · operator on one line with the NOT toggle and
+   * delete pinned top-right, values below. Narrow containers stack the fields
+   * under the type. Field filters add a path, keyword filters have no
+   * operator, and `exists` has no values.
+   */
   .leaf-row {
-    @apply mb-1.5 flex flex-wrap items-center gap-2 rounded-sm border border-border bg-surface-2 p-2.5;
+    @apply grid items-start gap-2 rounded-lg border border-border bg-surface p-2.5;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "type actions"
+      "op op"
+      "values values";
   }
 
-  .node-select {
-    @apply w-[120px] shrink-0 rounded border border-border-strong bg-surface px-2 py-1.5 font-ui text-[12.5px] font-medium text-text;
+  .leaf-row.is-field {
+    grid-template-areas:
+      "type actions"
+      "path path"
+      "op op"
+      "values values";
   }
 
-  .node-path {
-    @apply w-[160px] shrink-0;
+  .leaf-row.is-keyword {
+    grid-template-areas:
+      "type actions"
+      "values values";
   }
 
-  .node-values {
-    @apply min-w-[180px] flex-1;
+  .leaf-row.no-values {
+    grid-template-areas:
+      "type actions"
+      "op op";
   }
 
-  .node-exclude {
-    @apply flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] font-medium text-muted;
+  .leaf-row.is-field.no-values {
+    grid-template-areas:
+      "type actions"
+      "path path"
+      "op op";
+  }
+
+  @container (min-width: 34rem) {
+    .leaf-row {
+      grid-template-columns: 9.5rem 9.5rem minmax(0, 1fr) auto;
+      grid-template-areas:
+        "type op . actions"
+        "values values values values";
+    }
+
+    .leaf-row.is-field {
+      grid-template-columns: 9.5rem minmax(0, 1fr) 9.5rem auto;
+      grid-template-areas:
+        "type path op actions"
+        "values values values values";
+    }
+
+    .leaf-row.is-keyword {
+      grid-template-columns: 9.5rem minmax(0, 1fr) auto;
+      grid-template-areas:
+        "type . actions"
+        "values values values";
+    }
+
+    .leaf-row.no-values {
+      grid-template-areas: "type op . actions";
+    }
+
+    .leaf-row.is-field.no-values {
+      grid-template-areas: "type path op actions";
+    }
+  }
+
+  .leaf-row.is-negated {
+    @apply border-bad/40;
+  }
+
+  .leaf-type {
+    @apply min-w-0;
+    grid-area: type;
+  }
+
+  .leaf-path {
+    @apply min-w-0;
+    grid-area: path;
+  }
+
+  .leaf-op {
+    @apply min-w-0;
+    grid-area: op;
+  }
+
+  .leaf-values {
+    @apply min-w-0;
+    grid-area: values;
+  }
+
+  .leaf-actions {
+    @apply flex items-center gap-1 justify-self-end;
+    grid-area: actions;
   }
 
   .node-group {
-    @apply mb-1.5 rounded-sm border border-border bg-surface-2 p-2.5;
+    @apply flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-2.5;
   }
 
   .node-group-head {
-    @apply mb-2 flex flex-wrap items-center gap-2;
+    @apply flex flex-wrap items-center gap-2;
   }
 
-  .node-combo {
-    @apply w-[130px] rounded border border-border-strong bg-surface px-2 py-1.5 font-ui text-[12.5px] font-semibold text-text;
+  .node-kind > * {
+    @apply whitespace-nowrap;
   }
 
-  .node-combo-label {
-    @apply inline-flex items-center rounded border border-border-strong bg-surface px-2 py-1.5 font-ui text-[12.5px] font-semibold text-text;
-  }
-
-  .node-actions {
-    @apply ml-auto flex flex-wrap items-center gap-1.5;
-  }
-
-  .node-add {
-    @apply px-2 py-1 text-[12px];
+  .node-not-label {
+    @apply inline-flex items-center rounded-md bg-bad-dim px-2.5 py-1 text-xs font-semibold text-bad;
   }
 
   .node-children {
-    @apply flex flex-col gap-1.5;
+    @apply flex flex-col gap-2;
   }
 
   .node-empty {
     @apply py-1 text-[12px] italic text-muted;
+  }
+
+  .node-add {
+    @apply flex flex-wrap items-center gap-1;
+  }
+
+  .test-event {
+    @apply max-w-sm;
   }
 
   .test-payload {

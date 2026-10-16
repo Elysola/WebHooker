@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from "vue";
+import { computed, nextTick, provide, reactive, ref, watch } from "vue";
 import { Trash2 } from "lucide-vue-next";
 import type { Filter, FilterNode, NamedFragment, Route, RouteTarget, RouteTemplate } from "~/types";
 import { FRAGMENT_PRESETS, ROUTE_TEMPLATES } from "~/types";
 import type { NodeForm } from "~/composables/useFilterNode";
 import {
+  FILTER_SCOPE_EVENTS,
   blankLeafForm,
   blankNode,
   nodeToForm,
   nodeFormToRouteFilters,
   formToNode,
+  hasPendingDraft,
+  scopeEvents,
 } from "~/composables/useFilterNode";
+import { eventOptions, validateFilterValue } from "~/utils/filter-catalog";
 
 interface TargetForm {
   platform: "discord" | "telegram" | "feishu";
@@ -27,7 +31,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (e: "close"): void; (e: "save", route: Route): void }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { confirm } = useConfirm();
 
 const isEdit = computed(() => props.route != null);
@@ -65,6 +69,11 @@ const form = reactive({
 });
 
 const root = ref<NodeForm>(blankNode("all"));
+provide(
+  FILTER_SCOPE_EVENTS,
+  computed(() => scopeEvents(root.value)),
+);
+const eventSuggestions = computed(() => eventOptions(locale.value));
 
 const { fragments, load: loadFragments, save: saveFragments } = useFragmentsApi();
 const fragmentName = ref("");
@@ -75,6 +84,7 @@ const testEvent = ref("");
 const testResult = ref<{ matched: boolean; explanation: string } | null>(null);
 const testError = ref("");
 const testing = ref(false);
+const testEventInput = ref<{ hasInvalidDraft: () => boolean } | null>(null);
 
 function applyTemplate(tmpl: RouteTemplate): void {
   form.id = tmpl.id;
@@ -99,11 +109,21 @@ async function removeTarget(target: TargetForm): Promise<void> {
   if (index >= 0) form.targets.splice(index, 1);
 }
 
+function validateEventName(value: string): string | null {
+  return /^[a-z0-9_]+$/i.test(value) ? null : "valid.eventName";
+}
+
 function validateNode(nf: NodeForm): string | null {
   if (nf.kind === "leaf") {
-    if (nf.leaf.type === "field" && !nf.leaf.path.trim()) return t("routeEditor.errPath");
-    if (nf.leaf.op !== "exists" && nf.leaf.values.every((v) => !v.trim()))
-      return t("routeEditor.errValues");
+    const { type, op, path, values } = nf.leaf;
+    if (type === "field" && !path.trim()) return t("routeEditor.errPath");
+    if (type === "keyword" || op !== "exists") {
+      if (values.every((v) => !v.trim())) return t("routeEditor.errValues");
+      for (const value of values) {
+        const err = validateFilterValue(type, op, value);
+        if (err) return t("routeEditor.errInvalidValue", { value: value.trim(), reason: t(err) });
+      }
+    }
     return null;
   }
   if (nf.kind === "all" || nf.kind === "any") {
@@ -116,6 +136,12 @@ function validateNode(nf: NodeForm): string | null {
   }
   if (nf.child) return validateNode(nf.child);
   return t("routeEditor.errGroupEmpty");
+}
+
+/** Why the filter tree cannot be used as-is (unconfirmed input or an invalid value). */
+function filterTreeError(): string | null {
+  if (hasPendingDraft(root.value)) return t("routeEditor.errDraft");
+  return validateNode(root.value);
 }
 
 function collect(): Route | null {
@@ -184,6 +210,12 @@ function collect(): Route | null {
 }
 
 function validated(): Route | null {
+  if (hasPendingDraft(root.value)) {
+    targetError.value = "";
+    formError.value = "";
+    filterError.value = t("routeEditor.errDraft");
+    return null;
+  }
   const route = collect();
   if (!route) return null;
   if (!/^[a-z0-9][a-z0-9-]*$/.test(route.id)) {
@@ -240,6 +272,15 @@ async function runTest(): Promise<void> {
     testError.value = t("routeEditor.testInvalidJson");
     return;
   }
+  if (testEventInput.value?.hasInvalidDraft()) {
+    testError.value = t("routeEditor.testEventInvalid");
+    return;
+  }
+  const problem = filterTreeError();
+  if (problem) {
+    testError.value = problem;
+    return;
+  }
   const node = formToNode(root.value);
   if (!node) {
     testError.value = t("routeEditor.errAddFilter");
@@ -287,6 +328,11 @@ async function saveAsFragment(): Promise<void> {
     return;
   }
   if (!props.groupId) return;
+  const problem = filterTreeError();
+  if (problem) {
+    fragmentError.value = problem;
+    return;
+  }
   const node = formToNode(root.value);
   if (!node) {
     fragmentError.value = t("routeEditor.errAddFilter");
@@ -440,8 +486,17 @@ watch(
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.testMatch") }}</h3>
-        <div class="field">
-          <RcInput v-model="testEvent" :placeholder="t('routeEditor.testEvent')" />
+        <div class="field test-event">
+          <FilterCombobox
+            ref="testEventInput"
+            :model-value="testEvent"
+            :options="eventSuggestions"
+            creatable
+            :validate="validateEventName"
+            :placeholder="t('routeEditor.testEvent')"
+            :label="t('routeEditor.testEvent')"
+            @update:model-value="testEvent = typeof $event === 'string' ? $event : ''"
+          />
         </div>
         <div class="field">
           <RcTextarea
