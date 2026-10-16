@@ -315,6 +315,8 @@
       @close="groupEditorOpen = false"
       @save="onSaveGroup"
     />
+
+    <ConfirmDialog />
   </div>
 </template>
 
@@ -343,6 +345,7 @@ import AdminHome from "~/components/AdminHome.vue";
 
 const { t, toggle } = useI18n();
 const { push } = useToasts();
+const { confirm } = useConfirm();
 const route = useRoute();
 const router = useRouter();
 
@@ -582,7 +585,8 @@ async function onToggle(route: Route): Promise<void> {
 async function onDelete(route: Route): Promise<void> {
   const group = selectedGroup.value;
   if (!group) return;
-  if (!window.confirm(t("confirm.deleteRoute", { name: route.name || route.id }))) return;
+  if (!(await confirm({ title: t("confirm.deleteRoute", { name: route.name || route.id }) })))
+    return;
   try {
     await saveGroupRoutes(
       group.id,
@@ -665,8 +669,11 @@ async function onDeleteGroup(group: Group): Promise<void> {
   } catch {
     // Count is best-effort; proceed without the warning.
   }
-  const warn = used ? t("confirm.deleteGroupWarn", { n: used }) : "";
-  if (!window.confirm(t("confirm.deleteGroup", { name: group.name || group.id }) + warn)) return;
+  const confirmed = await confirm({
+    title: t("confirm.deleteGroup", { name: group.name || group.id }),
+    description: used ? t("confirm.deleteGroupWarn", { n: used }).trim() : undefined,
+  });
+  if (!confirmed) return;
   try {
     await saveGroups(groups.value.filter((g) => g.id !== group.id));
     push(t("toast.groupDeleted"));

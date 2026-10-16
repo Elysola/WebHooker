@@ -64,6 +64,8 @@ WebHooker 在 `/admin` 提供内置配置控制台，可在浏览器中管理路
 
 控制台以 SPA 形式在 `/admin` 提供；其标签页可通过 URL 路径直达（`/admin/groups`、`/admin/logs`、`/admin/audit`）。`/admin` 之外未匹配到端点的 URL 直接返回 `404`，而不会展示控制台。
 
+删除类操作——删除路由或分组——都会先弹出应用内确认框。
+
 所有管理端点（`/admin/api/*`）见 [Admin API](../api/admin)。保存的路由和分组会立即持久化到 D1（`d1_routes` / `d1_groups`），并使 KV 缓存失效、刷新配置缓存，下一次 webhook 处理即会生效。
 
 ## 过滤器类型

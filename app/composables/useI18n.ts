@@ -394,6 +394,8 @@ const en: Dict = {
   "confirm.deleteRoute": 'Delete route "{name}"?',
   "confirm.deleteGroup": 'Delete group "{name}"?',
   "confirm.deleteGroupWarn": " {n} route(s) reference it and will lose their group.",
+  "confirm.cancel": "Cancel",
+  "confirm.delete": "Delete",
 };
 
 const zh: Dict = {
@@ -782,6 +784,8 @@ const zh: Dict = {
   "confirm.deleteRoute": "确定删除路由“{name}”吗？",
   "confirm.deleteGroup": "确定删除分组“{name}”吗？",
   "confirm.deleteGroupWarn": " 有 {n} 条路由引用它，将失去所属分组。",
+  "confirm.cancel": "取消",
+  "confirm.delete": "删除",
 };
 
 const messages: Record<Locale, Dict> = { en, zh };
