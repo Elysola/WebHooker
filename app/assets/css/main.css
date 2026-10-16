@@ -1080,8 +1080,9 @@
   }
 
   /* ---- Members / invites ---- */
+  /* RcCard (padding="md") already pads the body; no second padding here. */
   .members-panel {
-    @apply mt-7 rounded border border-border bg-surface p-5;
+    @apply mt-7 rounded border border-border bg-surface;
   }
 
   .panel-head {
@@ -1096,17 +1097,31 @@
     @apply my-3.5 mb-2 text-xs;
   }
 
-  .member-list {
-    @apply m-0 mb-3 flex list-none flex-col gap-2 p-0;
+  /* Members flow as compact cards: name, role and remove on one line. */
+  .member-grid {
+    @apply m-0 mb-3.5 grid list-none gap-2.5 p-0;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
   }
 
-  .member-row,
+  .member-card {
+    @apply grid items-center gap-2 rounded-lg border border-border bg-surface-2 py-1.5 pl-3.5 pr-1.5;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .member-name {
+    @apply truncate text-[15px] font-semibold tracking-tight text-text;
+  }
+
+  .member-role {
+    @apply flex w-32 shrink-0 justify-end;
+  }
+
   .invite-row {
-    @apply flex flex-wrap items-center gap-2.5 rounded-sm border border-border bg-surface-2 px-3 py-2;
+    @apply flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg border border-border bg-surface-2 py-1.5 pl-3 pr-1.5;
   }
 
-  .member-login {
-    @apply min-w-[120px] flex-1 text-[13px] font-semibold;
+  .invite-actions {
+    @apply ml-auto flex items-center gap-1;
   }
 
   .role-pill {
@@ -1130,12 +1145,9 @@
     @apply flex flex-wrap items-center gap-2;
   }
 
-  .text-input {
-    @apply min-w-[200px] rounded border border-border bg-surface px-2.5 py-1.5 text-[13px] text-text outline-none;
-  }
-
-  .text-input:focus {
-    @apply border-accent;
+  .member-add-login {
+    @apply min-w-0 max-w-xs;
+    flex: 1 1 14rem;
   }
 
   .invite-box {
