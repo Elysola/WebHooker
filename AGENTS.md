@@ -44,7 +44,8 @@ app/                     # Vue 3 UI (Nuxt app dir)
 ├── composables/         # useI18n, useToasts, useConfirm (promise-based confirm), useGroups, useGroupRoutes, useFilterNode (AST helpers), useFragments, useLogs,
 │                        # useAudit, useInvites, useWebhook
 ├── types.ts             # shared client types (Route, Group, Filter, ...)
-└── utils/legal.ts       # terms/privacy HTML bodies (zh/en)
+└── utils/              # legal.ts (terms/privacy HTML bodies, zh/en), format.ts,
+                         # filter-catalog.ts (bilingual filter suggestions + value/path validators)
 server/                  # Nitro server
 ├── routes/              # H3 handlers: /health, /webhook[/:groupId], /discord/interactions, /telegram/webhook,
 │                        # /auth/github*, /admin/{login,logout,invite,api/**}, /api/{comment,merge,close,react,richheader}
