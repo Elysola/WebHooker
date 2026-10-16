@@ -276,7 +276,7 @@ bunx wrangler d1 create webhooker
 bunx wrangler queues create webhooker-delivery
 bunx wrangler queues create webhooker-delivery-dlq
 # Queues are declared in wrangler.jsonc (QUEUE binding); no env var needed
-bun run db:migrate:prod   # wrangler d1 migrations apply webhooker --remote (migrations/0001..0010)
+bun run db:migrate:prod   # wrangler d1 migrations apply webhooker --remote (migrations/0001..0011)
 # R2 bucket for oversized payloads (P0): bunx wrangler r2 bucket create webhooker-payloads
 bunx wrangler deploy
 ```
