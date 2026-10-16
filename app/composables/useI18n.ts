@@ -6,8 +6,8 @@ type Dict = Record<string, string>;
 
 const en: Dict = {
   "app.tagline": "CONFIG CONSOLE",
-  "app.newRoute": "+ New Route",
-  "app.newGroup": "+ New Group",
+  "app.newRoute": "New Route",
+  "app.newGroup": "New Group",
   "app.signOut": "Sign out",
   "app.langToggle": "中文",
   "login.title": "Config Console",
@@ -137,7 +137,7 @@ const en: Dict = {
   "groups.owners": "OWNERS",
   "groups.members": "MEMBERS",
   "groups.any": "any",
-  "groups.open": "Open →",
+  "groups.open": "Open",
   "group.back": "Groups",
   "group.routesIn": "Routes in {name}",
   "routes.emptyGroup": "No routes in this group yet.",
@@ -409,8 +409,8 @@ const en: Dict = {
 
 const zh: Dict = {
   "app.tagline": "配置控制台",
-  "app.newRoute": "+ 新建路由",
-  "app.newGroup": "+ 新建分组",
+  "app.newRoute": "新建路由",
+  "app.newGroup": "新建分组",
   "app.signOut": "退出登录",
   "app.langToggle": "EN",
   "login.title": "配置控制台",
@@ -538,7 +538,7 @@ const zh: Dict = {
   "groups.owners": "来源",
   "groups.members": "成员",
   "groups.any": "任意",
-  "groups.open": "进入 →",
+  "groups.open": "进入",
   "group.back": "返回分组",
   "group.routesIn": "{name} 的路由",
   "routes.emptyGroup": "该分组还没有路由。",
