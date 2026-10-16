@@ -88,6 +88,7 @@ bunx wrangler d1 execute webhooker --remote --file ./migrations/0007_send_logs_i
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0008_storage_d1.sql
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0010_fragments.sql
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0011_feishu_links.sql
+bunx wrangler d1 execute webhooker --remote --file ./migrations/0012_route_position.sql
 ```
 
 :::

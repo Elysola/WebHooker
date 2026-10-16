@@ -12,7 +12,7 @@ Core pipeline: GitHub Webhook → Worker (verify + filter + format) → Discord 
 - UI: Vue 3 + Tailwind CSS v4 (`@tailwindcss/vite`) + `@elysola/ui` (Nuxt module, `Rc` prefix); admin console is a client-side SPA (`routeRules: "/admin/**": { ssr: false }`), home/legal pages render server-side
 - Styling: Elysola UI supplies semantic components and blue theme tokens; `app/assets/css/main.css` retains `--wh-*` RGB-triplet aliases for app-specific Tailwind utilities and bespoke layouts (avoiding collision with Elysola's `--surface`/`--text`/`--border` hex tokens); theme switching supports auto/light/dark via `useTheme` / `ThemeToggle`, toggling `<html>.dark` with inline anti-flash head script
 - Discord interactions: HTTPS Interactions Endpoint (`POST /discord/interactions`, Ed25519-signed) — no Discord Gateway / Durable Object; bot stays offline, messages always sent via REST
-- Storage: D1 is the source of truth for config (routes/groups via `d1_routes`/`d1_groups`, see `server/lib/storage/config-store.ts`), send/audit logs, dedup (`dedup_keys`), delivery state (`delivery_state`) and message tracking (`message_tracking` via `server/lib/storage/d1.ts` `canUseD1` gate). KV keeps only cache + short-lived/ephemeral state (tokens, OAuth state, admin sessions, `msg:*`-adjacent locks, per-group secrets `tenant:*`, invites, i18n overrides) with explicit TTLs. R2 parks oversized queue payloads (`webhooks/YYYY/MM/DD/*.json`, `server/lib/storage/payload.ts`) instead of KV. A `storage-prune` scheduled task cleans up expired dedup/delivery/message-tracking rows
+- Storage: D1 is the source of truth for config (routes/groups via `d1_routes`/`d1_groups`, see `server/lib/storage/config-store.ts`; each route's per-group order lives in `d1_routes.position` — migration 0012 — and routes load ordered by `group_id, position, id`, falling back to id order on an unmigrated database), send/audit logs, dedup (`dedup_keys`), delivery state (`delivery_state`) and message tracking (`message_tracking` via `server/lib/storage/d1.ts` `canUseD1` gate). KV keeps only cache + short-lived/ephemeral state (tokens, OAuth state, admin sessions, `msg:*`-adjacent locks, per-group secrets `tenant:*`, invites, i18n overrides) with explicit TTLs. R2 parks oversized queue payloads (`webhooks/YYYY/MM/DD/*.json`, `server/lib/storage/payload.ts`) instead of KV. A `storage-prune` scheduled task cleans up expired dedup/delivery/message-tracking rows
 - Signature verification: Web Crypto API (HMAC-SHA256 for GitHub/Gitea, Ed25519 for Discord, timing-safe secret-token compare for Telegram)
 - Webhook providers: pluggable forge adapters under `server/lib/providers/` (github, gitea) — each verifies its own signature format and normalizes its payload to a GitHub-shaped `WebhookEvent`; a `custom` provider accepts arbitrary signed JSON posts (`X-WebHooker-Signature`) as `custom` events; GitLab etc. can be added later
 - Per-group webhook ingress: optional `POST /webhook/{groupId}` with a per-group secret in KV (`tenant:{groupId}`) — Gitea/classic-GitHub/custom webhooks are verified against the group's secret instead of the operator's global ones; only that group's routes fire. The legacy `POST /webhook` (global secrets, all routes) stays untouched
@@ -126,7 +126,7 @@ server/                  # Nitro server
     │   └── metrics.ts  # DeliveryMetrics + getDeliveryMetrics (SQL GROUP BY over send_logs: totals, per platform/event/status, duration, attempts, recent failures)
     ├── storage/        # storage primitives: canUseD1 probe, D1 config store (L1 memory → L2 KV cache → L3 D1), R2 payload store
     │   ├── d1.ts       # canUseD1(db) — prepare+batch probe for D1 availability (falls back to KV)
-    │   ├── config-store.ts # ConfigStore (loadRoutes/saveRoutes/loadGroups/saveGroups/invalidateCache) backed by d1_groups/d1_routes, seeds from KV + syncs cache
+    │   ├── config-store.ts # ConfigStore (loadRoutes/saveRoutes/loadGroups/saveGroups/invalidateCache) backed by d1_groups/d1_routes (per-group `position` order when migrated), seeds from KV + syncs cache
     │   └── payload.ts  # PayloadStore backed by R2 (webhooks/YYYY/MM/DD/*.json), no-binding stub throws
     └── lib/             # shared infra
         ├── i18n.ts      # loadTranslations (KV i18n:{lang} overrides), t() with param interpolation
@@ -276,7 +276,7 @@ bunx wrangler d1 create webhooker
 bunx wrangler queues create webhooker-delivery
 bunx wrangler queues create webhooker-delivery-dlq
 # Queues are declared in wrangler.jsonc (QUEUE binding); no env var needed
-bun run db:migrate:prod   # wrangler d1 migrations apply webhooker --remote (migrations/0001..0011)
+bun run db:migrate:prod   # wrangler d1 migrations apply webhooker --remote (migrations/0001..0012)
 # R2 bucket for oversized payloads (P0): bunx wrangler r2 bucket create webhooker-payloads
 bunx wrangler deploy
 ```
