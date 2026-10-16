@@ -283,8 +283,13 @@
   }
 
   /* ---- Route cards ---- */
+  .route-list {
+    @apply flex flex-col gap-2.5;
+    container-type: inline-size;
+  }
+
   .route-card {
-    @apply flex animate-rise items-center gap-4 rounded-xl border border-border bg-surface px-5 py-3.5 shadow-xs transition-all duration-150;
+    @apply block animate-rise rounded-xl border border-border bg-surface px-4 py-3 shadow-xs transition-all duration-150;
   }
 
   .route-card:hover {
@@ -295,28 +300,70 @@
     @apply opacity-60;
   }
 
-  .route-card-main {
-    @apply min-w-0 flex-1 space-y-2.5;
+  /* Mobile-first: title row with actions, then filters/targets, then the tags. */
+  .route-row {
+    @apply grid items-center gap-x-3 gap-y-2;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "lead title actions"
+      "body body body"
+      "tags tags tags";
   }
 
-  .route-card-header {
-    @apply flex flex-wrap items-center gap-2.5;
+  .route-lead {
+    @apply flex items-center;
+    grid-area: lead;
   }
 
-  .route-card-title {
-    @apply flex min-w-0 flex-wrap items-center gap-2;
+  .route-title {
+    @apply flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1;
+    grid-area: title;
   }
 
   .route-name {
-    @apply text-[15px] font-semibold tracking-tight text-text;
+    @apply min-w-0 text-[15px] font-semibold tracking-tight text-text;
+    overflow-wrap: anywhere;
   }
 
   .route-id {
     @apply rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-faint;
   }
 
-  .route-card-badges {
-    @apply ml-auto flex flex-wrap items-center gap-1.5;
+  .route-position {
+    @apply grid h-5 min-w-5 place-items-center rounded-md bg-accent-dim px-1 font-mono text-[11px] font-semibold text-accent-text tabular-nums;
+  }
+
+  .route-tags {
+    @apply flex flex-wrap items-center justify-end gap-1.5;
+    grid-area: tags;
+  }
+
+  .route-actions {
+    @apply flex items-center gap-0.5;
+    grid-area: actions;
+  }
+
+  .route-body {
+    @apply min-w-0 space-y-2;
+    grid-area: body;
+  }
+
+  @container (min-width: 40rem) {
+    .route-row {
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        "lead title tags actions"
+        ". body body body";
+    }
+  }
+
+  .route-summary {
+    @apply line-clamp-2 text-[12.5px] leading-relaxed text-muted;
+    overflow-wrap: anywhere;
+  }
+
+  .route-summary.is-empty {
+    @apply italic text-faint;
   }
 
   .route-badge {
@@ -324,18 +371,18 @@
   }
 
   .route-badge-dot {
-    @apply inline-block h-1.5 w-1.5 rounded-full;
+    @apply inline-block h-1.5 w-1.5 rounded-full bg-current;
   }
 
-  .route-badge-dc {
+  .route-badge-discord {
     @apply border-accent/20 bg-accent-dim/30 text-accent-text;
   }
 
-  .route-badge-tg {
+  .route-badge-telegram {
     @apply border-info/20 bg-info-dim/30 text-info;
   }
 
-  .route-badge-fs {
+  .route-badge-feishu {
     @apply border-warn/20 bg-warn-dim/30 text-warn;
   }
 
@@ -351,44 +398,12 @@
     @apply border-accent/30 bg-accent-dim/20 text-accent-text;
   }
 
-  .route-card-filters {
-    @apply flex flex-wrap items-center gap-2 text-xs;
-  }
-
-  .route-chip {
-    @apply inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-[11.5px];
-  }
-
-  .route-chip-type {
-    @apply font-bold uppercase tracking-wider text-faint text-[10px];
-  }
-
-  .route-chip-val {
-    @apply font-medium text-text;
-  }
-
-  .route-chip.exclude {
-    @apply border-bad/20 bg-bad-dim/20;
-  }
-
-  .route-chip.exclude .route-chip-type {
-    @apply text-bad;
-  }
-
-  .route-chip-empty {
-    @apply italic text-muted;
-  }
-
   .route-card-targets {
     @apply flex flex-wrap items-center gap-2 text-xs;
   }
 
-  .route-target {
-    @apply inline-flex items-center;
-  }
-
   .route-target-row {
-    @apply inline-flex items-center gap-1.5 rounded-md border border-border/80 bg-surface-2/60 px-2 py-0.5 text-xs;
+    @apply inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/80 bg-surface-2/60 px-2 py-0.5 text-xs;
   }
 
   .route-target-label {
@@ -396,19 +411,7 @@
   }
 
   .route-target-id {
-    @apply font-mono text-[11.5px] text-text;
-  }
-
-  .route-card-actions {
-    @apply flex shrink-0 items-center gap-1 self-center;
-  }
-
-  .route-action-btn {
-    @apply flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none disabled:opacity-25;
-  }
-
-  .route-action-btn-danger:hover {
-    @apply bg-bad-dim/30 text-bad;
+    @apply min-w-0 truncate font-mono text-[11.5px] text-text;
   }
 
   /* ---- Toggle switch ---- */

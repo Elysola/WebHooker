@@ -108,7 +108,7 @@
 
             <p v-if="groupRoutesError" class="err">{{ groupRoutesError }}</p>
 
-            <section class="space-y-2.5">
+            <section class="route-list">
               <RouteCard
                 v-for="(r, i) in groupRoutes"
                 :key="r.id"
