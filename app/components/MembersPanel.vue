@@ -94,6 +94,7 @@ import type { Group, GroupInvite, GroupMember, GroupRole } from "~/types";
 import { useInvitesApi } from "~/composables/useInvites";
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
 
 const props = defineProps<{ group: Group; canEdit: boolean; saving: boolean }>();
 const emit = defineEmits<{ (e: "save", group: Group): void }>();
@@ -156,11 +157,17 @@ function addMember(): void {
   emitSave();
 }
 
-function removeMember(m: GroupMember): void {
+async function removeMember(m: GroupMember): Promise<void> {
+  formError.value = "";
   if (m.role === "owner" && ownerCount() === 1) {
     formError.value = t("members.errLastOwner");
     return;
   }
+  const confirmed = await confirm({
+    title: t("confirm.removeMember", { name: m.login }),
+    confirmText: t("members.remove"),
+  });
+  if (!confirmed) return;
   members.value = members.value.filter((x) => x !== m);
   emitSave();
 }
@@ -202,6 +209,11 @@ async function copyInvite(inv: GroupInvite): Promise<void> {
 }
 
 async function revoke(inv: GroupInvite): Promise<void> {
+  const confirmed = await confirm({
+    title: t("confirm.revokeInvite"),
+    confirmText: t("members.revoke"),
+  });
+  if (!confirmed) return;
   try {
     await invitesApi.revoke(inv.token);
     invites.value = invites.value.filter((i) => i.token !== inv.token);

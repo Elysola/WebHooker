@@ -41,6 +41,7 @@
           v-if="info.hasSecret"
           type="button"
           variant="ghost"
+          color="error"
           size="sm"
           :disabled="busy"
           @click="onDisable"
@@ -67,6 +68,7 @@ import { ref, watch } from "vue";
 import { useWebhookApi, type GroupWebhookInfo } from "~/composables/useWebhook";
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
 
 const props = defineProps<{ groupId: string; canEdit: boolean }>();
 
@@ -123,6 +125,12 @@ async function onRegenerate(): Promise<void> {
 }
 
 async function onDisable(): Promise<void> {
+  const confirmed = await confirm({
+    title: t("confirm.disableWebhook"),
+    description: t("confirm.disableWebhookDetail"),
+    confirmText: t("webhook.disable"),
+  });
+  if (!confirmed) return;
   busy.value = true;
   error.value = "";
   try {

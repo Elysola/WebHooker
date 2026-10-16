@@ -396,6 +396,10 @@ const en: Dict = {
   "confirm.deleteGroupWarn": " {n} route(s) reference it and will lose their group.",
   "confirm.cancel": "Cancel",
   "confirm.delete": "Delete",
+  "confirm.removeMember": 'Remove member "{name}"?',
+  "confirm.revokeInvite": "Revoke this invite link?",
+  "confirm.disableWebhook": "Disable this group's webhook endpoint?",
+  "confirm.disableWebhookDetail": "The secret is deleted; senders still using it will be rejected.",
 };
 
 const zh: Dict = {
@@ -786,6 +790,10 @@ const zh: Dict = {
   "confirm.deleteGroupWarn": " 有 {n} 条路由引用它，将失去所属分组。",
   "confirm.cancel": "取消",
   "confirm.delete": "删除",
+  "confirm.removeMember": "确定移除成员“{name}”吗？",
+  "confirm.revokeInvite": "确定撤销该邀请链接吗？",
+  "confirm.disableWebhook": "确定停用该分组的 webhook 入口吗？",
+  "confirm.disableWebhookDetail": "secret 将被删除，仍在使用它的发送方会被拒绝。",
 };
 
 const messages: Record<Locale, Dict> = { en, zh };
