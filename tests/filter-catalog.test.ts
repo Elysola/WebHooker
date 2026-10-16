@@ -11,6 +11,9 @@ import {
   valueOptions,
 } from "../app/utils/filter-catalog";
 
+import { evaluateFilterNode } from "../server/lib/events/filter-ast";
+import type { WebhookEvent } from "../server/lib/types";
+
 function values(opts: { value: string }[]): string[] {
   return opts.map((o) => o.value);
 }
@@ -81,6 +84,61 @@ describe("filter catalog options", () => {
     expect(values(valueOptions("en", "branch", "eq", "", []))).toContain("main");
     expect(valueOptions("en", "repo", "eq", "", [])).toEqual([]);
     expect(valueOptions("en", "keyword", "eq", "", [])).toEqual([]);
+  });
+
+  it("turns glob suggestions into the literal text the operator compares", () => {
+    const branch = (op: "startsWith" | "endsWith" | "contains"): string[] =>
+      values(valueOptions("en", "branch", op, "", []));
+    expect(branch("startsWith")).toContain("release/");
+    expect(branch("startsWith")).not.toContain("release/*");
+    expect(branch("endsWith")).not.toContain("release/");
+    expect(branch("contains")).toContain("release/");
+    const actor = (op: "startsWith" | "endsWith"): string[] =>
+      values(valueOptions("en", "actor", op, "", []));
+    expect(actor("endsWith")).toContain("[bot]");
+    expect(actor("startsWith")).not.toContain("[bot]");
+  });
+
+  it("offers regex suggestions that match exactly what the suggestion means", () => {
+    const sender = (login: string): WebhookEvent => ({
+      event: "push",
+      payload: { sender: { login } },
+    });
+    const matches = (pattern: string, login: string): boolean =>
+      evaluateFilterNode({ type: "actor", op: "regex", match: pattern }, sender(login));
+    const actor = values(valueOptions("en", "actor", "regex", "", []));
+    expect(actor).toEqual([
+      "\\[bot\\]$",
+      "^dependabot\\[bot\\]$",
+      "^github-actions\\[bot\\]$",
+      "^renovate\\[bot\\]$",
+    ]);
+    for (const login of ["dependabot[bot]", "github-actions[bot]", "renovate[bot]"]) {
+      expect(matches(actor[0]!, login)).toBe(true);
+      expect(actor.slice(1).filter((p) => matches(p, login))).toHaveLength(1);
+    }
+    expect(matches("^dependabot\\[bot\\]$", "dependabotb")).toBe(false);
+    expect(values(valueOptions("en", "branch", "regex", "", []))).toEqual([
+      "^main$",
+      "^master$",
+      "^develop$",
+      "^release/",
+    ]);
+    // Anchored: `pull_request` must not also match `pull_request_review`.
+    const events = values(valueOptions("en", "event", "regex", "", []));
+    expect(events).toContain("^pull_request$");
+    const review: WebhookEvent = { event: "pull_request_review", payload: {} };
+    expect(
+      evaluateFilterNode({ type: "event", op: "regex", match: "^pull_request$" }, review),
+    ).toBe(false);
+    for (const pattern of events) {
+      expect(validateFilterValue("event", "regex", pattern)).toBeNull();
+    }
+  });
+
+  it("offers no non-numeric suggestion to comparison operators", () => {
+    expect(valueOptions("en", "field", "gt", "pull_request.draft", [])).toEqual([]);
+    expect(valueOptions("en", "event", "lte", "", [])).toEqual([]);
   });
 
   it("ignores typed event names that are not catalog entries", () => {

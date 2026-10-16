@@ -1126,8 +1126,56 @@ const BRANCH_SUGGESTIONS: Array<[string, Bilingual]> = [
   ["release/*", { en: "Any release/ branch", zh: "所有 release/ 分支" }],
 ];
 
+/**
+ * Glob suggestions adapted to the substring operators, which compare text
+ * literally: each becomes the text the glob implies (`release/*` →
+ * `release/` for startsWith, `*[bot]` → `[bot]` for endsWith) or is dropped.
+ */
+function suggestionsFor(
+  list: Array<[string, Bilingual]>,
+  op: FilterOp,
+): Array<[string, Bilingual]> {
+  if (op !== "contains" && op !== "startsWith" && op !== "endsWith") return list;
+  return list.flatMap(([value, label]): Array<[string, Bilingual]> => {
+    if (!isGlob(value)) return [[value, label]];
+    const prefix = /^[^*?]+\*$/.test(value) ? value.slice(0, -1) : null;
+    const suffix = /^\*[^*?]+$/.test(value) ? value.slice(1) : null;
+    const literal = op === "startsWith" ? prefix : op === "endsWith" ? suffix : (prefix ?? suffix);
+    return literal ? [[literal, label]] : [];
+  });
+}
+
+/**
+ * A suggestion as a raw pattern: metacharacters escaped
+ * (`dependabot\[bot\]`), `*`/`?` globs turned into `.*`/`.`, anchored at the
+ * ends the glob fixes (`^main$`, `^release/`, `\[bot\]$`).
+ */
+function suggestionRegex(value: string): string {
+  const body = value
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  return `^${body}$`.replace(/^\^\.\*/, "").replace(/\.\*\$$/, "") || ".*";
+}
+
 /** Value suggestions for a leaf of `type` and `op` (`path` and `events` add context). */
 export function valueOptions(
+  locale: Locale,
+  type: FilterType,
+  op: FilterOp,
+  path: string,
+  events: string[],
+): ComboOption[] {
+  const options = typeValueOptions(locale, type, op, path, events);
+  // `regex` reads a raw pattern: offer each suggestion as the regex it means.
+  if (op === "regex") return options.map((o) => ({ ...o, value: suggestionRegex(o.value) }));
+  // Comparison operators need numbers, which no suggestion is.
+  if (op === "gt" || op === "gte" || op === "lt" || op === "lte")
+    return options.filter((o) => Number.isFinite(Number(o.value)));
+  return options;
+}
+
+function typeValueOptions(
   locale: Locale,
   type: FilterType,
   op: FilterOp,
@@ -1140,9 +1188,9 @@ export function valueOptions(
     case "action":
       return actionOptions(locale, events);
     case "actor":
-      return ACTOR_SUGGESTIONS.map(([v, label]) => toOption(v, label, locale));
+      return suggestionsFor(ACTOR_SUGGESTIONS, op).map(([v, label]) => toOption(v, label, locale));
     case "branch":
-      return BRANCH_SUGGESTIONS.map(([v, label]) => toOption(v, label, locale));
+      return suggestionsFor(BRANCH_SUGGESTIONS, op).map(([v, label]) => toOption(v, label, locale));
     case "field":
       return fieldValueOptions(locale, path);
     default:
