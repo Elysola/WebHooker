@@ -47,6 +47,7 @@
         @keydown="onKeydown"
         @focus="focused = true"
         @blur="onBlur"
+        @paste="onPaste"
       />
       <ComboboxTrigger class="filter-combo-trigger" tabindex="-1" :aria-label="label">
         <ChevronDown :size="14" />
@@ -126,6 +127,7 @@ import {
   ComboboxViewport,
 } from "reka-ui";
 import type { ComboOption } from "~/utils/filter-catalog";
+import { commaEndsValue, splitFilterValues } from "~/utils/filter-catalog";
 
 /**
  * Searchable dropdown for the filter editor. Options carry the stored English
@@ -153,6 +155,11 @@ const props = withDefaults(
      * the owner can refuse to save it and restore it after a remount.
      */
     draft?: string;
+    /**
+     * Multi-value fields: a comma adds the typed value. Off for raw regular
+     * expressions, where a comma belongs to the pattern (`{1,3}`).
+     */
+    splitOnComma?: boolean;
   }>(),
   {
     multiple: false,
@@ -162,6 +169,7 @@ const props = withDefaults(
     label: "",
     mono: true,
     draft: "",
+    splitOnComma: true,
   },
 );
 
@@ -407,10 +415,46 @@ function onKeydown(event: KeyboardEvent): void {
     }
     return;
   }
+  if (event.key === "," && props.multiple && props.creatable) {
+    const [start, end] = selectionOf(event);
+    if (commaEndsValue(draft.value, start, end, props.splitOnComma)) {
+      event.preventDefault();
+      commitDraft();
+    }
+    return;
+  }
   if (event.key === "Backspace" && props.multiple && !draft.value && values.value.length) {
     event.preventDefault();
     removeAt(values.value.length - 1);
   }
 }
 
+/** Selected range of the draft input (the caret when nothing is selected). */
+function selectionOf(event: Event): [number, number] {
+  const input = event.target as HTMLInputElement;
+  const start = input.selectionStart ?? draft.value.length;
+  return [start, input.selectionEnd ?? start];
+}
+
+function onPaste(event: ClipboardEvent): void {
+  if (!props.multiple || !props.creatable) return;
+  const text = event.clipboardData?.getData("text") ?? "";
+  const [start, end] = selectionOf(event);
+  // The pasted text replaces the selection, exactly as a native paste would.
+  const combined = draft.value.slice(0, start) + text + draft.value.slice(end);
+  const parts = splitFilterValues(combined, props.splitOnComma);
+  // Nothing to separate: the browser pastes into the draft as usual.
+  if (parts.length <= 1 && (parts[0] ?? "") === combined.trim()) return;
+  event.preventDefault();
+  const next = [...values.value];
+  const rejected: string[] = [];
+  for (const part of parts) {
+    if (props.validate?.(part)) rejected.push(part);
+    else if (!next.includes(part)) next.push(part);
+  }
+  if (next.length !== values.value.length) setValues(next);
+  draft.value = rejected.join(", ");
+  typing.value = rejected.length > 0;
+  commitError.value = rejected.length ? (props.validate?.(rejected[0]!) ?? null) : null;
+}
 </script>

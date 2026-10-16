@@ -1161,6 +1161,60 @@ function isWrappedRegex(value: string): boolean {
   return value.length >= 2 && value.startsWith("/") && value.endsWith("/");
 }
 
+/**
+ * Length of the `/regex/` that `text` starts with: up to the first closing
+ * `/` followed by a comma or the end of the text, or -1 while it is still
+ * open. Escaped slashes (`\/`) and slashes in a character class (`[/,]`)
+ * never close it.
+ */
+function wrappedRegexLength(text: string): number {
+  if (!text.startsWith("/")) return -1;
+  let inClass = false;
+  for (let i = 1; i < text.length; i++) {
+    const char = text[i];
+    if (char === "\\") i++;
+    else if (inClass) inClass = char !== "]";
+    else if (char === "[") inClass = true;
+    else if (char === "/" && /^\s*(?:,|$)/.test(text.slice(i + 1))) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * Split typed or pasted text into match values: one per line and, unless
+ * `commas` is off (the raw `regex` operator), one per comma. A `/regex/`
+ * keeps its own commas (`/v{1,3}/`, `/[/,]/`).
+ */
+export function splitFilterValues(text: string, commas = true): string[] {
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!commas) {
+      out.push(line);
+      continue;
+    }
+    let rest = line.trimStart();
+    while (rest) {
+      const regexLength = wrappedRegexLength(rest);
+      const token = regexLength > 0 ? rest.slice(0, regexLength) : rest.split(",", 1)[0]!;
+      out.push(token);
+      rest = rest.slice(token.length).replace(/^\s*,/, "").trimStart();
+    }
+  }
+  return out.map((v) => v.trim()).filter(Boolean);
+}
+
+/**
+ * Whether a comma typed over `text[start, end)` ends the value being typed —
+ * only when typed at its end (no selection) and outside an open `/regex/`.
+ * Anywhere else the comma is part of the text; raw patterns (`commas` off)
+ * keep every comma.
+ */
+export function commaEndsValue(text: string, start: number, end: number, commas = true): boolean {
+  if (!commas || start !== end || text.slice(end).trim()) return false;
+  const value = text.slice(0, start).trim();
+  return !value.startsWith("/") || wrappedRegexLength(value) === value.length;
+}
+
 function isGlob(value: string): boolean {
   return value.includes("*") || value.includes("?");
 }

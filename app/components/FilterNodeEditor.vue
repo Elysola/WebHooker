@@ -164,6 +164,7 @@ async function remove(): Promise<void> {
           multiple
           creatable
           :validate="validateValue"
+          :split-on-comma="node.leaf.op !== 'regex'"
           :draft="node.leaf.draft"
           :placeholder="t('routeEditor.valuesPlaceholder')"
           :label="t('routeEditor.values')"

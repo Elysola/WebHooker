@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import {
   actionOptions,
+  commaEndsValue,
+  splitFilterValues,
   eventOptions,
   fieldPathOptions,
   fieldValueOptions,
@@ -139,6 +141,55 @@ describe("validateFilterValue", () => {
   it("rejects patterns the server would never match", () => {
     expect(validateFilterValue("event", "eq", "a*".repeat(101))).toBe("valid.tooLong");
     expect(validateFilterValue("field", "regex", "a".repeat(201))).toBe("valid.tooLong");
+  });
+});
+
+describe("splitFilterValues", () => {
+  it("splits on commas and lines", () => {
+    expect(splitFilterValues("push, issues\nrelease,")).toEqual(["push", "issues", "release"]);
+    expect(splitFilterValues(" , \r\n ")).toEqual([]);
+  });
+
+  it("keeps the commas of a wrapped regex", () => {
+    expect(splitFilterValues("main,/release-[0-9]{1,3}/")).toEqual([
+      "main",
+      "/release-[0-9]{1,3}/",
+    ]);
+    expect(splitFilterValues("/a,b/ , /c/d,e/,f")).toEqual(["/a,b/", "/c/d,e/", "f"]);
+    // An unterminated regex is ordinary text.
+    expect(splitFilterValues("/a{1,2")).toEqual(["/a{1", "2"]);
+  });
+
+  it("never closes a regex at an escaped slash or inside a character class", () => {
+    expect(splitFilterValues("/[/,]/")).toEqual(["/[/,]/"]);
+    expect(splitFilterValues("/a\\/,b/,c")).toEqual(["/a\\/,b/", "c"]);
+    expect(splitFilterValues("/[\\]/,]x/")).toEqual(["/[\\]/,]x/"]);
+  });
+
+  it("splits raw regex patterns on lines only", () => {
+    expect(splitFilterValues("^v{1,3}$\n[a,b]", false)).toEqual(["^v{1,3}$", "[a,b]"]);
+  });
+});
+
+describe("commaEndsValue", () => {
+  it("ends a value only when the comma is typed at its end", () => {
+    expect(commaEndsValue("push", 4, 4)).toBe(true);
+    expect(commaEndsValue("push ", 5, 5)).toBe(true);
+    expect(commaEndsValue("push", 2, 2)).toBe(false);
+    // Typing over a selection replaces it, like any other character.
+    expect(commaEndsValue("push", 0, 4)).toBe(false);
+  });
+
+  it("keeps commas inside a regex that is still open", () => {
+    expect(commaEndsValue("/a{1", 4, 4)).toBe(false);
+    expect(commaEndsValue("/[/", 3, 3)).toBe(false);
+    expect(commaEndsValue("/a{1,3}/", 8, 8)).toBe(true);
+    // Editing a finished regex: the caret sits inside it.
+    expect(commaEndsValue("/a{13}/", 4, 4)).toBe(false);
+  });
+
+  it("never ends raw patterns", () => {
+    expect(commaEndsValue("^v{1", 4, 4, false)).toBe(false);
   });
 });
 
