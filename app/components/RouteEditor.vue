@@ -27,6 +27,7 @@ const props = withDefaults(
 const emit = defineEmits<{ (e: "close"): void; (e: "save", route: Route): void }>();
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
 
 const isEdit = computed(() => props.route != null);
 const discordRoles = computed({
@@ -82,6 +83,18 @@ function applyTemplate(tmpl: RouteTemplate): void {
 
 function addTarget(): void {
   form.targets.push(blankTarget());
+}
+
+async function removeTarget(target: TargetForm): Promise<void> {
+  const filled = [target.channelId, target.threadId, target.chatId, target.topicId].some((v) =>
+    v.trim(),
+  );
+  if (filled) {
+    const n = form.targets.indexOf(target) + 1;
+    if (!(await confirm({ title: t("confirm.removeTarget", { n }) }))) return;
+  }
+  const index = form.targets.indexOf(target);
+  if (index >= 0) form.targets.splice(index, 1);
 }
 
 function validateNode(nf: NodeForm): string | null {
@@ -277,12 +290,17 @@ async function saveAsFragment(): Promise<void> {
   }
 }
 
-function deleteFragment(frag: NamedFragment): void {
-  if (!props.groupId) return;
+async function deleteFragment(frag: NamedFragment): Promise<void> {
+  const groupId = props.groupId;
+  if (!groupId) return;
+  if (!(await confirm({ title: t("confirm.deleteFragment", { name: frag.name }) }))) return;
+  fragmentError.value = "";
   const next = fragments.value.filter((f) => f.id !== frag.id);
-  saveFragments(props.groupId, next).catch((err) => {
+  try {
+    await saveFragments(groupId, next);
+  } catch (err) {
     fragmentError.value = err instanceof Error ? err.message : String(err);
-  });
+  }
 }
 
 watch(
@@ -537,7 +555,7 @@ watch(
             size="icon"
             class="[grid-area:del] justify-self-end"
             :title="t('routeEditor.remove')"
-            @click="form.targets.splice(i, 1)"
+            @click="removeTarget(tg)"
           >
             ✕
           </RcButton>

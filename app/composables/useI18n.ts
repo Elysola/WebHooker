@@ -396,10 +396,15 @@ const en: Dict = {
   "confirm.deleteGroupWarn": " {n} route(s) reference it and will lose their group.",
   "confirm.cancel": "Cancel",
   "confirm.delete": "Delete",
+  "confirm.removeCondition": "Delete this condition?",
+  "confirm.removeFilterGroup": "Delete this condition group and everything in it?",
+  "confirm.removeTarget": "Remove target {n}?",
+  "confirm.deleteFragment": 'Delete fragment "{name}"?',
   "confirm.removeMember": 'Remove member "{name}"?',
   "confirm.revokeInvite": "Revoke this invite link?",
   "confirm.disableWebhook": "Disable this group's webhook endpoint?",
   "confirm.disableWebhookDetail": "The secret is deleted; senders still using it will be rejected.",
+  "confirm.removeForgeSource": 'Remove host "{name}"?',
 };
 
 const zh: Dict = {
@@ -790,10 +795,15 @@ const zh: Dict = {
   "confirm.deleteGroupWarn": " 有 {n} 条路由引用它，将失去所属分组。",
   "confirm.cancel": "取消",
   "confirm.delete": "删除",
+  "confirm.removeCondition": "确定删除该条件吗？",
+  "confirm.removeFilterGroup": "确定删除该条件组及其中的全部条件吗？",
+  "confirm.removeTarget": "确定删除第 {n} 个目标吗？",
+  "confirm.deleteFragment": "确定删除片段“{name}”吗？",
   "confirm.removeMember": "确定移除成员“{name}”吗？",
   "confirm.revokeInvite": "确定撤销该邀请链接吗？",
   "confirm.disableWebhook": "确定停用该分组的 webhook 入口吗？",
   "confirm.disableWebhookDetail": "secret 将被删除，仍在使用它的发送方会被拒绝。",
+  "confirm.removeForgeSource": "确定删除来源主机“{name}”吗？",
 };
 
 const messages: Record<Locale, Dict> = { en, zh };

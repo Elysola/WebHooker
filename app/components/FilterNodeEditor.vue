@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { NodeForm } from "~/composables/useFilterNode";
-import { blankNode } from "~/composables/useFilterNode";
+import { blankNode, isBlankNode } from "~/composables/useFilterNode";
 import { FILTER_TYPES, FILTER_OPS } from "~/types";
 
 defineOptions({ name: "FilterNodeEditor" });
@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<{ node: NodeForm; depth?: number; deletab
 const emit = defineEmits<{ (e: "remove"): void }>();
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
 
 const NODE_KINDS = ["all", "any"] as const;
 const filterTypeOptions = computed(() =>
@@ -36,6 +37,17 @@ function unwrapNot(): void {
   props.node.leaf = child.leaf;
   props.node.children = child.children;
   props.node.child = child.child;
+}
+
+async function remove(): Promise<void> {
+  if (!isBlankNode(props.node)) {
+    const confirmed = await confirm({
+      title:
+        props.node.kind === "leaf" ? t("confirm.removeCondition") : t("confirm.removeFilterGroup"),
+    });
+    if (!confirmed) return;
+  }
+  emit("remove");
 }
 </script>
 
@@ -80,7 +92,7 @@ function unwrapNot(): void {
         size="icon"
         class="icon-btn danger"
         :title="t('routeEditor.remove')"
-        @click="emit('remove')"
+        @click="remove"
       >
         ✕
       </RcButton>
@@ -124,7 +136,7 @@ function unwrapNot(): void {
             size="icon"
             class="icon-btn danger"
             :title="t('routeEditor.remove')"
-            @click="emit('remove')"
+            @click="remove"
           >
             ✕
           </RcButton>
@@ -157,7 +169,7 @@ function unwrapNot(): void {
             size="icon"
             class="icon-btn danger"
             :title="t('routeEditor.remove')"
-            @click="emit('remove')"
+            @click="remove"
           >
             ✕
           </RcButton>

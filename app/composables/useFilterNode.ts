@@ -116,6 +116,21 @@ export function nodeFormToRouteFilters(nf: NodeForm): { filters: Filter[]; ast?:
   return { filters: [], ast: ast ?? undefined };
 }
 
+/**
+ * Whether a node holds nothing worth confirming before it is removed: an
+ * untouched condition (default operator, no path, no values, not negated) or
+ * groups made only of those. A changed operator counts as content, since
+ * e.g. `exists` is a complete condition without values.
+ */
+export function isBlankNode(nf: NodeForm): boolean {
+  if (nf.kind === "leaf") {
+    const { exclude, op, path, values } = nf.leaf;
+    return !exclude && op === "eq" && !path.trim() && values.every((v) => !v.trim());
+  }
+  if (nf.kind === "all" || nf.kind === "any") return nf.children.every(isBlankNode);
+  return !nf.child || isBlankNode(nf.child);
+}
+
 export function collectEvents(node: FilterNode): string[] {
   const out: string[] = [];
   const walk = (n: FilterNode): void => {

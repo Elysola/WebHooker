@@ -85,7 +85,7 @@
               variant="destructive"
               size="icon"
               class="[grid-area:del] justify-self-end"
-              @click="form.forgeSources.splice(i, 1)"
+              @click="removeForgeSource(s)"
             >
               ✕
             </RcButton>
@@ -240,6 +240,7 @@ import { reactive, watch } from "vue";
 import type { ForgeSource, Group } from "~/types";
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
 
 const props = defineProps<{
   open: boolean;
@@ -284,6 +285,15 @@ const owners = computed({
 
 function addForgeSource(): void {
   form.forgeSources.push({ host: "", type: "github" });
+}
+
+async function removeForgeSource(source: ForgeSource): Promise<void> {
+  const label = source.host.trim() || source.name?.trim();
+  if (label && !(await confirm({ title: t("confirm.removeForgeSource", { name: label }) }))) {
+    return;
+  }
+  const index = form.forgeSources.indexOf(source);
+  if (index >= 0) form.forgeSources.splice(index, 1);
 }
 function toggleProvider(p: "github" | "gitea", checked: boolean): void {
   form.providers = checked
