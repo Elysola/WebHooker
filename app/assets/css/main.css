@@ -719,6 +719,19 @@
     @apply w-full;
   }
 
+  .option-list {
+    @apply mb-4 flex flex-col gap-3;
+  }
+
+  .option-row {
+    @apply flex flex-col items-start gap-1;
+  }
+
+  /* Indented to line up with the checkbox label text. */
+  .option-hint {
+    @apply m-0 pl-[1.625rem] text-[11.5px] leading-snug text-faint;
+  }
+
   .ctl-md {
     @apply w-full max-w-64;
   }
@@ -727,29 +740,31 @@
     @apply mt-2 flex w-full max-w-md flex-col gap-2;
   }
 
-  .target-row {
-    @apply mb-2 grid grid-cols-[minmax(130px,1fr)_auto] items-center gap-2 rounded-sm border border-border bg-surface-2 p-2.5 max-sm:grid-cols-[1fr_auto];
-    grid-template-areas:
-      "select del"
-      "in1 in2";
+  .target-card {
+    @apply mb-2 flex flex-col gap-2.5 rounded-lg border border-border bg-surface-2 p-3;
   }
 
-  .target-row select {
-    @apply w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-ui text-[12.5px] font-medium text-text;
-    grid-area: select;
+  .target-card-head {
+    @apply flex items-center justify-between gap-2;
   }
 
-  .target-row input.tg-in1 {
-    grid-area: in1;
+  .target-platform {
+    @apply w-44 max-w-full;
   }
 
-  .target-row input.tg-in2 {
-    grid-area: in2;
+  .target-field {
+    @apply grid items-center gap-x-3 gap-y-1;
+    grid-template-columns: 7rem minmax(0, 28rem);
   }
 
-  .target-row > .icon-btn {
-    grid-area: del;
-    justify-self: end;
+  .target-field > label {
+    @apply text-xs font-semibold text-muted;
+  }
+
+  @media (max-width: 640px) {
+    .target-field {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .add-filter {
@@ -873,7 +888,7 @@
   }
 
   .fragment-row {
-    @apply flex items-center gap-2 rounded-sm border border-border bg-surface-2 p-2;
+    @apply flex items-center gap-2 rounded-lg border border-border bg-surface-2 py-1.5 pl-3 pr-1.5;
   }
 
   .fragment-name {
@@ -885,7 +900,11 @@
   }
 
   .fragment-save {
-    @apply flex items-center gap-2;
+    @apply flex max-w-lg items-center gap-2;
+  }
+
+  .fragment-save-input {
+    @apply min-w-0 flex-1;
   }
 
   .log-block {

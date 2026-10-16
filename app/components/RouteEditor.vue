@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
+import { Trash2 } from "lucide-vue-next";
 import type { Filter, FilterNode, NamedFragment, Route, RouteTarget, RouteTemplate } from "~/types";
 import { FRAGMENT_PRESETS, ROUTE_TEMPLATES } from "~/types";
 import type { NodeForm } from "~/composables/useFilterNode";
@@ -40,6 +41,7 @@ const discordRoles = computed({
     form.discordRolesText = roles.join(", ");
   },
 });
+const bodyEl = ref<HTMLFormElement | null>(null);
 const filterError = ref("");
 const targetError = ref("");
 const formError = ref("");
@@ -181,20 +183,20 @@ function collect(): Route | null {
   };
 }
 
-function save(): void {
+function validated(): Route | null {
   const route = collect();
-  if (!route) return;
+  if (!route) return null;
   if (!/^[a-z0-9][a-z0-9-]*$/.test(route.id)) {
     formError.value = t("routeEditor.errIdFormat");
-    return;
+    return null;
   }
   if (!route.name) {
     formError.value = t("routeEditor.errName");
-    return;
+    return null;
   }
   if (!route.targets.length) {
     targetError.value = t("routeEditor.errTargets");
-    return;
+    return null;
   }
   form.targets.forEach((tg, i) => {
     if ((tg.platform === "telegram" || tg.platform === "feishu") && !tg.chatId.trim()) {
@@ -203,8 +205,21 @@ function save(): void {
       targetError.value = t("routeEditor.errChannel", { n: i + 1 });
     }
   });
-  if (targetError.value) return;
-  emit("save", route);
+  return targetError.value ? null : route;
+}
+
+function save(): void {
+  const route = validated();
+  if (route) {
+    emit("save", route);
+    return;
+  }
+  // The footer button may be far from the failing section: bring the error into view.
+  nextTick(() =>
+    bodyEl.value
+      ?.querySelector("[data-save-error]")
+      ?.scrollIntoView({ block: "center", behavior: "smooth" }),
+  );
 }
 
 function close(): void {
@@ -350,7 +365,7 @@ watch(
   <RcDialog
     :open="open"
     :title="isEdit ? t('routeEditor.editTitle') : t('routeEditor.newTitle')"
-    class="editor-dialog flex flex-col gap-0 max-h-[calc(100dvh-2rem)] overflow-hidden p-0 max-w-3xl"
+    class="editor-dialog flex flex-col gap-0 max-h-[calc(100dvh-2rem)] overflow-hidden p-0 max-w-4xl"
     @update:open="onOpenChange"
   >
     <template #header>
@@ -362,7 +377,7 @@ watch(
       </div>
     </template>
 
-    <form class="editor-body" @submit.prevent="save">
+    <form ref="bodyEl" class="editor-body" @submit.prevent="save">
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionBasic") }}</h3>
         <div v-if="!isEdit" class="templates">
@@ -378,29 +393,33 @@ watch(
             {{ t(tmpl.nameKey) }}
           </RcButton>
         </div>
-        <div class="field">
-          <label>{{ t("routeEditor.name") }}</label>
-          <RcInput v-model="form.name" :placeholder="t('routeEditor.namePlaceholder')" required />
-        </div>
-        <div class="field">
-          <label>{{ t("routeEditor.id") }}</label>
-          <RcInput v-model="form.id" placeholder="my-route" required />
-          <div class="hint">{{ t("routeEditor.idHint") }}</div>
+        <div class="row2">
+          <div class="field">
+            <label>{{ t("routeEditor.name") }}</label>
+            <RcInput v-model="form.name" :placeholder="t('routeEditor.namePlaceholder')" required />
+          </div>
+          <div class="field">
+            <label>{{ t("routeEditor.id") }}</label>
+            <RcInput v-model="form.id" placeholder="my-route" required />
+            <div class="hint">{{ t("routeEditor.idHint") }}</div>
+          </div>
         </div>
       </section>
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionOptions") }}</h3>
-        <div class="field inline">
-          <RcSwitch v-model="form.enabled" :label="t('routeEditor.enabled')" />
-        </div>
-        <div class="field inline">
-          <RcCheckbox v-model="form.fallback" :label="t('routeEditor.fallback')" />
-          <span class="lbl-note">{{ t("routeEditor.fallbackHint") }}</span>
-        </div>
-        <div class="field inline">
-          <RcCheckbox v-model="form.stop" :label="t('routeEditor.stop')" />
-          <span class="lbl-note">{{ t("routeEditor.stopHint") }}</span>
+        <div class="option-list">
+          <div class="option-row">
+            <RcSwitch v-model="form.enabled" :label="t('routeEditor.enabled')" />
+          </div>
+          <div class="option-row">
+            <RcCheckbox v-model="form.fallback" :label="t('routeEditor.fallback')" />
+            <p class="option-hint">{{ t("routeEditor.fallbackHint") }}</p>
+          </div>
+          <div class="option-row">
+            <RcCheckbox v-model="form.stop" :label="t('routeEditor.stop')" />
+            <p class="option-hint">{{ t("routeEditor.stopHint") }}</p>
+          </div>
         </div>
         <div class="field">
           <label>{{ t("routeEditor.discordRoles") }}</label>
@@ -415,13 +434,8 @@ watch(
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionFilters") }}</h3>
-        <div class="field">
-          <label>{{ t("routeEditor.filters") }}</label>
-        </div>
-        <div class="field">
-          <FilterNodeEditor :node="root" />
-        </div>
-        <div v-if="filterError" class="err">{{ filterError }}</div>
+        <FilterNodeEditor :node="root" />
+        <div v-if="filterError" class="err" data-save-error>{{ filterError }}</div>
       </section>
 
       <section class="editor-section">
@@ -485,21 +499,31 @@ watch(
             </RcButton>
             <RcButton
               type="button"
-              variant="destructive"
+              variant="ghost"
+              color="error"
               size="icon"
+              class="h-8 w-8 text-muted hover:text-bad"
               :title="t('routeEditor.fragmentsDelete')"
+              :aria-label="t('routeEditor.fragmentsDelete')"
               @click="deleteFragment(frag)"
             >
-              ✕
+              <Trash2 :size="15" />
             </RcButton>
           </div>
         </div>
-        <div class="field fragment-save">
-          <RcInput
-            v-model="fragmentName"
-            :placeholder="t('routeEditor.fragmentsNamePlaceholder')"
-          />
-          <RcButton type="button" variant="ghost" @click="saveAsFragment">
+        <div class="fragment-save">
+          <div class="fragment-save-input">
+            <RcInput
+              v-model="fragmentName"
+              :placeholder="t('routeEditor.fragmentsNamePlaceholder')"
+            />
+          </div>
+          <RcButton
+            type="button"
+            variant="ghost"
+            class="shrink-0 whitespace-nowrap"
+            @click="saveAsFragment"
+          >
             {{ t("routeEditor.fragmentsSave") }}
           </RcButton>
         </div>
@@ -508,65 +532,85 @@ watch(
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionTargets") }}</h3>
-        <div v-for="(tg, i) in form.targets" :key="i" class="target-row">
-          <RcSelect
-            v-model="tg.platform"
-            class="[grid-area:select]"
-            :options="[
-              { label: 'Discord', value: 'discord' },
-              { label: 'Telegram', value: 'telegram' },
-              { label: t('routeEditor.platformFeishu'), value: 'feishu' },
-            ]"
-          />
+        <div v-for="(tg, i) in form.targets" :key="i" class="target-card">
+          <div class="target-card-head">
+            <div class="target-platform">
+              <RcSelect
+                v-model="tg.platform"
+                :options="[
+                  { label: 'Discord', value: 'discord' },
+                  { label: 'Telegram', value: 'telegram' },
+                  { label: t('routeEditor.platformFeishu'), value: 'feishu' },
+                ]"
+              />
+            </div>
+            <RcButton
+              type="button"
+              variant="ghost"
+              color="error"
+              size="icon"
+              class="h-8 w-8 text-muted hover:text-bad"
+              :title="t('routeEditor.removeTarget')"
+              :aria-label="t('routeEditor.removeTarget')"
+              @click="removeTarget(tg)"
+            >
+              <Trash2 :size="15" />
+            </RcButton>
+          </div>
           <template v-if="tg.platform === 'discord'">
-            <RcInput
-              v-model="tg.channelId"
-              class="[grid-area:in1]"
-              :placeholder="t('routeEditor.channelPlaceholder')"
-            />
-            <RcInput
-              v-model="tg.threadId"
-              class="[grid-area:in2]"
-              :placeholder="t('routeEditor.threadPlaceholder')"
-            />
-          </template>
-          <template v-else-if="tg.platform === 'telegram'">
-            <RcInput
-              v-model="tg.chatId"
-              class="[grid-area:in1]"
-              :placeholder="t('routeEditor.chatPlaceholder')"
-            />
-            <RcInput
-              v-model="tg.topicId"
-              class="[grid-area:in2]"
-              :placeholder="t('routeEditor.topicPlaceholder')"
-            />
+            <div class="target-field">
+              <label :for="`target-${i}-channel`">{{ t("routeEditor.channel") }}</label>
+              <RcInput
+                :id="`target-${i}-channel`"
+                v-model="tg.channelId"
+                :placeholder="t('routeEditor.channelPlaceholder')"
+              />
+            </div>
+            <div class="target-field">
+              <label :for="`target-${i}-thread`"
+                >{{ t("routeEditor.thread") }}
+                <span class="lbl-note">{{ t("routeEditor.threadNote") }}</span></label
+              >
+              <RcInput
+                :id="`target-${i}-thread`"
+                v-model="tg.threadId"
+                :placeholder="t('routeEditor.threadPlaceholder')"
+              />
+            </div>
           </template>
           <template v-else>
-            <RcInput
-              v-model="tg.chatId"
-              class="[grid-area:in1]"
-              :placeholder="t('routeEditor.feishuChatPlaceholder')"
-            />
+            <div class="target-field">
+              <label :for="`target-${i}-chat`">{{ t("routeEditor.chat") }}</label>
+              <RcInput
+                :id="`target-${i}-chat`"
+                v-model="tg.chatId"
+                :placeholder="
+                  tg.platform === 'telegram'
+                    ? t('routeEditor.chatPlaceholder')
+                    : t('routeEditor.feishuChatPlaceholder')
+                "
+              />
+            </div>
+            <div v-if="tg.platform === 'telegram'" class="target-field">
+              <label :for="`target-${i}-topic`"
+                >{{ t("routeEditor.topic") }}
+                <span class="lbl-note">{{ t("routeEditor.topicNote") }}</span></label
+              >
+              <RcInput
+                :id="`target-${i}-topic`"
+                v-model="tg.topicId"
+                :placeholder="t('routeEditor.topicPlaceholder')"
+              />
+            </div>
           </template>
-          <RcButton
-            type="button"
-            variant="destructive"
-            size="icon"
-            class="[grid-area:del] justify-self-end"
-            :title="t('routeEditor.remove')"
-            @click="removeTarget(tg)"
-          >
-            ✕
-          </RcButton>
         </div>
         <RcButton type="button" variant="ghost" class="add-filter" @click="addTarget">
           {{ t("routeEditor.addTarget") }}
         </RcButton>
-        <div v-if="targetError" class="err">{{ targetError }}</div>
+        <div v-if="targetError" class="err" data-save-error>{{ targetError }}</div>
       </section>
 
-      <div v-if="formError" class="err">{{ formError }}</div>
+      <div v-if="formError" class="err" data-save-error>{{ formError }}</div>
     </form>
 
     <template #footer>
