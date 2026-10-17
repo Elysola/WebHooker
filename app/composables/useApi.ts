@@ -15,6 +15,10 @@ export function useAuthState() {
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: "same-origin",
+    // Live data, never from the browser cache. This also keeps requests out of
+    // its per-URL cache lock: otherwise one request that never answers makes
+    // every later request for the same URL wait up to 20 s behind it.
+    cache: "no-store",
     ...init,
     // JSON in/out: h3's readBody only parses JSON bodies when the request
     // declares application/json, and the browser defaults string bodies to

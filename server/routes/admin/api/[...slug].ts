@@ -1,4 +1,10 @@
-import { defineEventHandler, getMethod, getRouterParam, setResponseStatus } from "h3";
+import {
+  defineEventHandler,
+  getMethod,
+  getRouterParam,
+  setResponseHeader,
+  setResponseStatus,
+} from "h3";
 import {
   adminApiMe,
   adminApiGroupsGet,
@@ -27,6 +33,8 @@ import {
 export default defineEventHandler((event) => {
   const method = getMethod(event);
   const seg = (getRouterParam(event, "slug") ?? "").split("/").filter(Boolean);
+  // Per-user, live admin data: no browser or proxy may store or reuse it.
+  setResponseHeader(event, "Cache-Control", "no-store");
 
   if (seg[0] === "me" && method === "GET") return adminApiMe(event);
   if (seg[0] === "groups" && seg.length === 1) {
