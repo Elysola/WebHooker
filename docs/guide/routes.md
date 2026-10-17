@@ -34,14 +34,14 @@ Each entry of `targets` is a push destination, so one route can forward to sever
 | Field            | Type     | Required | Description                                                                                                       |
 | ---------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
 | `groupId`        | string   | Yes      | Id of the [group](./groups) this route belongs to                                                                 |
-| `fallback`       | boolean  | No       | When `true`, fires only if no non-fallback route matched the event; its own filters are ignored                   |
-| `stop`           | boolean  | No       | When `true` and this route matches, no further routes are evaluated for this event                                |
+| `fallback`       | boolean  | No       | When `true`, fires only if no non-fallback route of the same group matched the event; its filters still apply     |
+| `stop`           | boolean  | No       | When `true` and this route matches, no further routes of the same group are evaluated for this event              |
 | `discordRoleIds` | string[] | No       | Discord role ids to ping when this route fires; applied to Discord targets only                                   |
 | `ast`            | object   | No       | Boolean filter tree (`{all:[...]}` / `{any:[...]}` / `{not:{...}}`); takes precedence over `filters` when present |
 
 ## Route Order
 
-Routes are evaluated in the order the console shows them, group by group. To change it, click **Reorder** on the group page, drag routes by their handle (or focus a handle and press <kbd>↑</kbd> / <kbd>↓</kbd>), then **Save order**. The order is stored per group in D1 (`d1_routes.position`, migration `0012`); a database without that migration keeps loading routes in id order.
+Routes are evaluated in the order the console shows them, group by group. `stop` and `fallback` act within a group: a matching `stop` route skips the later routes of its own group only, and a group's fallback routes stay silent only when one of that group's regular routes matched — one group never silences another. To change it, click **Reorder** on the group page, drag routes by their handle (or focus a handle and press <kbd>↑</kbd> / <kbd>↓</kbd>), then **Save order**. The order is stored per group in D1 (`d1_routes.position`, migration `0012`); a database without that migration keeps loading routes in id order.
 
 ## Discord Role Mentions
 

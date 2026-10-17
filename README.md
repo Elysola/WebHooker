@@ -103,7 +103,7 @@ Routes are stored in D1 (`d1_routes`, seeded from legacy KV `config:routes` on f
 ]
 ```
 
-`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (optional `topicId` for a topic). A route may also set `stop: true` (skip later routes). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.elysola.org/guide/routes) and [Groups & Access Control](https://webhooker.docs.elysola.org/guide/groups) guides for the full schema.
+`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (optional `topicId` for a topic). A route may also set `stop: true` (skip later routes of its group). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.elysola.org/guide/routes) and [Groups & Access Control](https://webhooker.docs.elysola.org/guide/groups) guides for the full schema.
 
 ### Web UI (`/admin`)
 

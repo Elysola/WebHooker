@@ -67,15 +67,17 @@ export interface Route {
    */
   ast?: FilterNode;
   /**
-   * Fallback route: only fires when no other (non-fallback) route matched the
-   * event. Multiple fallback routes may exist; they are all skipped whenever at
-   * least one regular route matches. Its own filters are ignored.
+   * Fallback route: only fires when no other (non-fallback) route of the same
+   * group matched the event. Multiple fallback routes may exist; a group's are
+   * all skipped whenever one of its regular routes matches. Its own filters
+   * still apply.
    */
   fallback?: boolean;
   /**
-   * Stop: when true and this route matches, no further routes are evaluated
-   * for this event. Useful for exclusive routing where a match should prevent
-   * fallthrough to subsequent routes.
+   * Stop: when true and this route matches, no further routes of the same
+   * group are evaluated for this event (other groups are unaffected). Useful
+   * for exclusive routing where a match should prevent fallthrough to the
+   * group's subsequent routes.
    */
   stop?: boolean;
   /**

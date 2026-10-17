@@ -215,6 +215,48 @@ describe("dispatchEvent fallback routing", () => {
     expect(sent.filter((u) => u.includes("/222/"))).toHaveLength(1);
   });
 
+  it("scopes stop and fallback to the route's own group", async () => {
+    const sent: string[] = [];
+    mockFetch((url) => {
+      sent.push(url);
+      return new Response("{}", { status: 200 });
+    });
+    const env = createEnv({ KV: createMockKV(), DB: createMockDB() });
+    const route = (
+      id: string,
+      groupId: string,
+      extra: Partial<Route>,
+      channelId: string,
+    ): Route => ({
+      id,
+      name: id,
+      enabled: true,
+      filters: [{ type: "event", match: "push" }],
+      targets: [{ channelId }],
+      groupId,
+      ...extra,
+    });
+    const routes: Route[] = [
+      route("alpha-stop", "alpha", { stop: true }, "301"),
+      route("alpha-later", "alpha", {}, "302"),
+      route("zeta-push", "zeta", {}, "303"),
+      route("zeta-catch-all", "zeta", { fallback: true, filters: [] }, "304"),
+      route("omega-catch-all", "omega", { fallback: true, filters: [] }, "305"),
+      route("omega-catch-all-2", "omega", { fallback: true, filters: [] }, "306"),
+    ];
+
+    await dispatchEvent({ ...baseConfig, routes }, { event: "push", payload: {} }, env);
+    const hits = (channel: string): number => sent.filter((u) => u.includes(`/${channel}/`)).length;
+    // alpha stops after its first match without silencing zeta.
+    expect(hits("301")).toBe(1);
+    expect(hits("302")).toBe(0);
+    expect(hits("303")).toBe(1);
+    // zeta matched a regular route, omega did not: only omega's fallbacks fire.
+    expect(hits("304")).toBe(0);
+    expect(hits("305")).toBe(1);
+    expect(hits("306")).toBe(1);
+  });
+
   it("prepends role mentions to the Discord message content", async () => {
     const bodies: string[] = [];
     mockFetch((url, init) => {

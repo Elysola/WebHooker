@@ -103,7 +103,7 @@ bunx wrangler dev    # 启动本地开发服务器
 ]
 ```
 
-`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（可选 `topicId` 指向子话题）。路由还可设置 `stop: true`（跳过后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.elysola.org/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.elysola.org/zh/guide/groups)指南。
+`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（可选 `topicId` 指向子话题）。路由还可设置 `stop: true`（跳过本分组的后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.elysola.org/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.elysola.org/zh/guide/groups)指南。
 
 ### Web 控制台（`/admin`）
 
