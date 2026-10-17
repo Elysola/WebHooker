@@ -19,6 +19,7 @@
           v-else-if="!readonly"
           :model-value="route.enabled"
           size="sm"
+          :disabled="locked"
           @update:model-value="onToggle"
         />
         <span v-else class="dot" :class="route.enabled ? 'ok' : 'bad'"></span>
@@ -62,6 +63,7 @@
           variant="ghost"
           size="icon"
           class="h-8 w-8 text-muted hover:text-text"
+          :disabled="locked"
           :title="t('routeEditor.editTitle')"
           :aria-label="t('routeEditor.editTitle')"
           @click="emit('edit', route)"
@@ -74,6 +76,7 @@
           color="error"
           size="icon"
           class="h-8 w-8 text-muted hover:text-bad"
+          :disabled="locked"
           :title="t('routes.delete')"
           :aria-label="t('routes.delete')"
           @click="emit('delete', route)"
@@ -123,7 +126,10 @@ const props = defineProps<{
   readonly?: boolean;
   /** Reorder mode: a drag handle replaces the switch and the actions hide. */
   reordering?: boolean;
-  /** The new order is being saved: the handle waits until it is written. */
+  /**
+   * The routes are being written (an order, a switch, a delete): every control
+   * waits, so the next change builds on what was saved.
+   */
   locked?: boolean;
   /** 1-based position shown while reordering. */
   position?: number;

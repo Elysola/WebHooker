@@ -140,7 +140,7 @@
                     color="neutral"
                     size="sm"
                     class="console-reorder-btn"
-                    :disabled="groupRoutesLoading || saving"
+                    :disabled="routesBusy"
                     :title="t('routes.reorder')"
                     :aria-label="t('routes.reorder')"
                     @click="startReorder"
@@ -152,6 +152,7 @@
                     v-if="canCreateRoute"
                     size="sm"
                     class="console-new-route-btn"
+                    :disabled="!routesWritable"
                     :title="t('app.newRoute')"
                     :aria-label="t('app.newRoute')"
                     @click="openNew"
@@ -190,7 +191,7 @@
             <RouteList
               :routes="reordering ? orderDraft : groupRoutes"
               :reordering="reordering"
-              :locked="savingOrder"
+              :locked="routesLocked"
               :readonly="!canEditRoutes(selectedGroup.id)"
               @update:routes="orderDraft = $event"
               @update:busy="reorderBusy = $event"
@@ -201,7 +202,7 @@
 
             <section v-if="groupRoutesReady && !groupRoutes.length" class="console-empty">
               <RcEmptyState :title="t('routes.emptyGroup')">
-                <RcButton v-if="canEditRoutes(selectedGroup.id)" @click="openNew"
+                <RcButton v-if="canCreateRoute" :disabled="!routesWritable" @click="openNew"
                   ><Plus :size="16" />{{ t("routes.createFirst") }}</RcButton
                 >
               </RcEmptyState>
@@ -412,7 +413,7 @@
     <RouteEditor
       :open="editorOpen"
       :route="editing"
-      :saving="saving"
+      :saving="routesLocked"
       :group-id="selectedGroup?.id ?? null"
       @close="editorOpen = false"
       @save="onSave"
@@ -595,6 +596,26 @@ const savingGroup = ref(false);
 const reordering = ref(false);
 const orderDraft = ref<Route[]>([]);
 const savingOrder = ref(false);
+/** Route saves (toggle/delete) still in flight; reordering waits for them. */
+const routeMutations = ref(0);
+const routesBusy = computed(
+  () => groupRoutesLoading.value || saving.value || routeMutations.value > 0,
+);
+/** Route controls wait while the routes load or a write is in flight. */
+const routesLocked = computed(() => routesBusy.value || savingOrder.value);
+/**
+ * A route write may start: the group's routes are loaded (a save replaces the
+ * whole list, so writing from a still-empty or failed list would wipe it)
+ * and no other load or write is running.
+ */
+const routesWritable = computed(() => groupRoutesReady.value && !routesLocked.value);
+
+/** Refuse a route write the page is not ready for; true when it may go ahead. */
+function canWriteRoutes(): boolean {
+  if (routesWritable.value) return true;
+  push(t("toast.routesNotReady"), "bad");
+  return false;
+}
 /** A dropped card is still settling; its new position is not in the draft yet. */
 const reorderBusy = ref(false);
 const orderChanged = computed(
@@ -856,7 +877,7 @@ watch(
 );
 
 function startReorder(): void {
-  if (groupRoutesLoading.value || saving.value) return;
+  if (!routesWritable.value) return;
   orderDraft.value = [...groupRoutes.value];
   reorderBusy.value = false;
   reordering.value = true;
@@ -871,9 +892,18 @@ function cancelReorder(): void {
 async function saveOrder(): Promise<void> {
   const group = selectedGroup.value;
   if (!group || !orderChanged.value || reorderBusy.value || savingOrder.value) return;
+  if (!groupRoutesReady.value || routesBusy.value) {
+    push(t("toast.routesNotReady"), "bad");
+    return;
+  }
   savingOrder.value = true;
   try {
-    await saveGroupRoutes(group.id, orderDraft.value);
+    // Persist the latest copy of each route in the draft order, so the save
+    // can never resurrect or roll back a route changed since reordering began.
+    const latest = new Map(groupRoutes.value.map((r) => [r.id, r]));
+    const ordered = orderDraft.value.flatMap((r) => latest.get(r.id) ?? []);
+    const added = groupRoutes.value.filter((r) => !orderDraft.value.some((d) => d.id === r.id));
+    await saveGroupRoutes(group.id, [...ordered, ...added]);
     cancelReorder();
     push(t("toast.orderSaved"));
   } catch (err) {
@@ -915,7 +945,7 @@ function openEdit(route: Route): void {
 
 async function onSave(route: Route): Promise<void> {
   const group = selectedGroup.value;
-  if (!group) return;
+  if (!group || !canWriteRoutes()) return;
   saving.value = true;
   try {
     let next: Route[];
@@ -940,7 +970,8 @@ async function onSave(route: Route): Promise<void> {
 
 async function onToggle(route: Route): Promise<void> {
   const group = selectedGroup.value;
-  if (!group) return;
+  if (!group || !canWriteRoutes()) return;
+  routeMutations.value++;
   try {
     await saveGroupRoutes(
       group.id,
@@ -948,15 +979,21 @@ async function onToggle(route: Route): Promise<void> {
     );
   } catch (err) {
     push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
-    loadGroupRoutes(group.id);
+    // Restore the switch from the server, unless another group is open by now.
+    if (routeGroupId.value === group.id) loadGroupRoutes(group.id);
+  } finally {
+    routeMutations.value--;
   }
 }
 
 async function onDelete(route: Route): Promise<void> {
   const group = selectedGroup.value;
-  if (!group) return;
+  if (!group || !canWriteRoutes()) return;
   if (!(await confirm({ title: t("confirm.deleteRoute", { name: route.name || route.id }) })))
     return;
+  // The page may have changed while the question was open.
+  if (selectedGroup.value?.id !== group.id || !canWriteRoutes()) return;
+  routeMutations.value++;
   try {
     await saveGroupRoutes(
       group.id,
@@ -965,6 +1002,8 @@ async function onDelete(route: Route): Promise<void> {
     push(t("toast.routeDeleted"));
   } catch (err) {
     push(t("toast.deleteFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
+  } finally {
+    routeMutations.value--;
   }
 }
 
