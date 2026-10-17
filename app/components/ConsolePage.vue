@@ -91,11 +91,11 @@
             v-if="view === 'overview'"
             :key="refreshKey"
             :groups="groups"
-            :logs="logs"
-            :metrics="metrics"
+            :logs="overviewLogs"
+            :metrics="overviewMetrics"
             :groups-loading="groupsLoading"
-            :logs-loading="logsLoading"
-            :metrics-loading="metricsLoading"
+            :logs-loading="overviewLogsLoading"
+            :metrics-loading="overviewMetricsLoading"
           />
 
           <template v-else-if="selectedGroup">
@@ -525,11 +525,22 @@ const loadingAny = computed(
     groupsLoading.value ||
     logsLoading.value ||
     metricsLoading.value ||
+    overviewLogsLoading.value ||
+    overviewMetricsLoading.value ||
     groupRoutesLoading.value ||
     auditLoading.value,
 );
 
 const { logs, loading: logsLoading, error: logsError, load: loadLogs } = useSendLogs();
+// Overview shows every group's latest sends and totals, apart from the Send
+// Logs and Stats pages and their group filters (the console stays mounted, so
+// shared state would carry one page's filter into the other).
+const { logs: overviewLogs, loading: overviewLogsLoading, load: loadOverviewLogs } = useSendLogs();
+const {
+  metrics: overviewMetrics,
+  loading: overviewMetricsLoading,
+  load: loadOverviewMetrics,
+} = useMetrics();
 const {
   entries: auditEntries,
   loading: auditLoading,
@@ -692,17 +703,23 @@ onMounted(() => {
     if (params.get("install") === "ok") push(t("install.ok"));
   }
   loadGroups();
-  loadLogs(50, logFilterGroup.value || undefined);
-  loadMetrics();
 });
 
-// Tab switches are client-side navigations (no remount), so load the audit
-// log whenever the audit view becomes active — including direct deep links.
+// The console stays mounted across its pages (the admin page has a fixed
+// key), so a page refreshes what it shows whenever it becomes active —
+// direct deep links included.
 watch(
   view,
-  (v) => {
+  (v, previous) => {
+    if (v === "overview") {
+      loadOverviewLogs(50);
+      loadOverviewMetrics();
+    }
+    if (v === "logs") loadLogs(50, logFilterGroup.value || undefined);
     if (v === "audit") loadAudit(50, auditFilterGroup.value || undefined);
     if (v === "metrics") loadMetrics(metricsFilterGroup.value || undefined);
+    // The first load runs on mount; later visits pick up changes made since.
+    if (previous && (v === "overview" || v === "groups")) loadGroups();
   },
   { immediate: true },
 );
@@ -816,7 +833,7 @@ watch(
 
 async function refreshOverview(): Promise<void> {
   refreshKey.value++;
-  await Promise.all([loadGroups(), loadLogs(50, logFilterGroup.value || undefined), loadMetrics()]);
+  await Promise.all([loadGroups(), loadOverviewLogs(50), loadOverviewMetrics()]);
   push(t("overview.refreshed"));
 }
 
