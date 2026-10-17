@@ -59,8 +59,8 @@
             }}</span></RcButton
           >
         </div>
-        <div class="console-actions">
-          <RcButton v-if="view === 'overview'" variant="ghost" size="sm" @click="refreshOverview"
+        <div v-if="view === 'overview'" class="console-actions">
+          <RcButton variant="ghost" size="sm" @click="refreshOverview"
             ><RefreshCw :size="15" />{{ t("metrics.refresh") }}</RcButton
           >
         </div>
