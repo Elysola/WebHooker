@@ -779,7 +779,9 @@ async function onDeleteGroup(group: Group): Promise<void> {
 <style scoped>
 .console-shell {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  /* The sidebar narrows with the window (264px from ~1260px down to 208px),
+     wide enough for every label in either language. */
+  grid-template-columns: clamp(208px, 21vw, 264px) minmax(0, 1fr);
   min-height: 100vh;
   background: rgb(var(--wh-bg));
   color: rgb(var(--wh-text));
@@ -1045,6 +1047,11 @@ async function onDeleteGroup(group: Group): Promise<void> {
     border-bottom: 1px solid rgb(var(--wh-border));
     padding: 0.5rem 1rem;
     overflow-x: auto;
+    /* Still swipeable, without a scrollbar under the tabs. */
+    scrollbar-width: none;
+  }
+  .console-mobile-nav::-webkit-scrollbar {
+    display: none;
   }
   .console-mobile-nav :deep(.rc-tabs) {
     min-width: max-content;
