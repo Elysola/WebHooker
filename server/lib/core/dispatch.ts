@@ -98,6 +98,7 @@ export async function dispatchEvent(
     if (route.fallback) {
       if (!regularMatched.has(scope) && matchRoute(route, event)) {
         tasks.push(processRoute(route));
+        if (route.stop) stopped.add(scope);
       }
       continue;
     }

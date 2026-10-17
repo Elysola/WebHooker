@@ -241,7 +241,7 @@ describe("dispatchEvent fallback routing", () => {
       route("alpha-later", "alpha", {}, "302"),
       route("zeta-push", "zeta", {}, "303"),
       route("zeta-catch-all", "zeta", { fallback: true, filters: [] }, "304"),
-      route("omega-catch-all", "omega", { fallback: true, filters: [] }, "305"),
+      route("omega-catch-all", "omega", { fallback: true, stop: true, filters: [] }, "305"),
       route("omega-catch-all-2", "omega", { fallback: true, filters: [] }, "306"),
     ];
 
@@ -251,10 +251,11 @@ describe("dispatchEvent fallback routing", () => {
     expect(hits("301")).toBe(1);
     expect(hits("302")).toBe(0);
     expect(hits("303")).toBe(1);
-    // zeta matched a regular route, omega did not: only omega's fallbacks fire.
+    // zeta matched a regular route, omega did not: only omega's fallback fires,
+    // and its `stop` keeps omega's later fallback silent.
     expect(hits("304")).toBe(0);
     expect(hits("305")).toBe(1);
-    expect(hits("306")).toBe(1);
+    expect(hits("306")).toBe(0);
   });
 
   it("prepends role mentions to the Discord message content", async () => {
