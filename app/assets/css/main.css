@@ -553,6 +553,11 @@
     padding: 0 !important;
   }
 
+  /* The dialog itself takes focus on open (useDialogFocus); its fields show the ring. */
+  .editor-dialog:focus {
+    outline: none;
+  }
+
   .editor-dialog > div:first-child {
     margin-bottom: 0 !important;
     flex-shrink: 0 !important;
