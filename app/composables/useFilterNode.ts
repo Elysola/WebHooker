@@ -1,4 +1,9 @@
+import { toRaw } from "vue";
+import type { ComputedRef, InjectionKey } from "vue";
 import type { Filter, FilterNode, FilterOp, FilterType } from "~/types";
+
+/** Exact event names the edited route filters on (see `scopeEvents`). */
+export const FILTER_SCOPE_EVENTS: InjectionKey<ComputedRef<string[]>> = Symbol("filter-scope");
 
 export interface LeafForm {
   type: FilterType;
@@ -6,6 +11,12 @@ export interface LeafForm {
   op: FilterOp;
   values: string[];
   exclude: boolean;
+  /**
+   * Text typed into the values input but not added yet (editor-only, never
+   * saved). It lives on the leaf so it follows the condition when the input
+   * remounts (a NOT unwrapped, the root wrapped by an inserted fragment).
+   */
+  draft: string;
 }
 
 export type NodeKind = "leaf" | "all" | "any" | "not";
@@ -17,8 +28,22 @@ export interface NodeForm {
   child: NodeForm | null;
 }
 
+const nodeKeys = new WeakMap<object, number>();
+let lastNodeKey = 0;
+
+/** Stable render key of a node form (list indexes shift when siblings are removed). */
+export function nodeKey(nf: NodeForm): number {
+  const raw = toRaw(nf);
+  let key = nodeKeys.get(raw);
+  if (key === undefined) {
+    key = ++lastNodeKey;
+    nodeKeys.set(raw, key);
+  }
+  return key;
+}
+
 export function blankLeafForm(): LeafForm {
-  return { type: "event", path: "", op: "eq", values: [], exclude: false };
+  return { type: "event", path: "", op: "eq", values: [], exclude: false, draft: "" };
 }
 
 export function blankNode(kind: NodeKind): NodeForm {
@@ -42,6 +67,7 @@ function leafToForm(f: Filter): LeafForm {
     op: f.op ?? "eq",
     values: matchToValues(f.match),
     exclude: !!f.exclude,
+    draft: "",
   };
 }
 
@@ -60,12 +86,14 @@ export function nodeToForm(node: FilterNode): NodeForm {
 
 export function formToLeaf(lf: LeafForm): Filter | null {
   const values = lf.values.map((v) => v.trim()).filter((v) => v.length > 0);
-  if (lf.op !== "exists" && values.length === 0) return null;
+  // Keyword filters ignore the operator on the server, so never store one.
+  const op: FilterOp = lf.type === "keyword" ? "eq" : lf.op;
+  if (op !== "exists" && values.length === 0) return null;
   if (lf.type === "field" && lf.path.trim().length === 0) return null;
   const filter: Filter = { type: lf.type };
   if (lf.type === "field") filter.path = lf.path.trim();
-  if (lf.op !== "eq") filter.op = lf.op;
-  if (lf.op !== "exists") filter.match = values.length === 1 ? values[0] : values;
+  if (op !== "eq") filter.op = op;
+  if (op !== "exists") filter.match = values.length === 1 ? values[0] : values;
   if (lf.exclude) filter.exclude = true;
   return filter;
 }
@@ -114,6 +142,53 @@ export function nodeFormToRouteFilters(nf: NodeForm): { filters: Filter[]; ast?:
   }
   const ast = formToNode(nf);
   return { filters: [], ast: ast ?? undefined };
+}
+
+/**
+ * Exact event names a route positively filters on (negated conditions,
+ * `not` groups, globs and regexes are skipped) — the context the filter
+ * editor uses to rank action and field suggestions.
+ */
+export function scopeEvents(nf: NodeForm): string[] {
+  const out = new Set<string>();
+  const walk = (n: NodeForm): void => {
+    if (n.kind === "leaf") {
+      const { type, op, exclude, values } = n.leaf;
+      if (type !== "event" || exclude || (op !== "eq" && op !== "in")) return;
+      for (const v of values) {
+        const value = v.trim();
+        if (/^[a-z0-9_]+$/i.test(value)) out.add(value.toLowerCase());
+      }
+      return;
+    }
+    if (n.kind === "all" || n.kind === "any") n.children.forEach(walk);
+  };
+  walk(nf);
+  return [...out];
+}
+
+/**
+ * Whether a node holds nothing worth confirming before it is removed: an
+ * untouched condition (default operator, no path, no values, not negated) or
+ * groups made only of those. A changed operator counts as content, since
+ * e.g. `exists` is a complete condition without values.
+ */
+export function isBlankNode(nf: NodeForm): boolean {
+  if (nf.kind === "leaf") {
+    const { draft, exclude, op, path, values } = nf.leaf;
+    return (
+      !exclude && op === "eq" && !path.trim() && values.every((v) => !v.trim()) && !draft.trim()
+    );
+  }
+  if (nf.kind === "all" || nf.kind === "any") return nf.children.every(isBlankNode);
+  return !nf.child || isBlankNode(nf.child);
+}
+
+/** Whether a condition of the tree still holds typed text that was not added. */
+export function hasPendingDraft(nf: NodeForm): boolean {
+  if (nf.kind === "leaf") return !!nf.leaf.draft.trim();
+  if (nf.kind === "all" || nf.kind === "any") return nf.children.some(hasPendingDraft);
+  return !!nf.child && hasPendingDraft(nf.child);
 }
 
 export function collectEvents(node: FilterNode): string[] {

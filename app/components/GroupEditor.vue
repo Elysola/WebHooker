@@ -66,35 +66,41 @@
             <span class="lbl-note">{{ t("groupEditor.forgeSourcesNote") }}</span></label
           >
           <div v-for="(s, i) in form.forgeSources" :key="i" class="forge-source-row">
-            <RcInput
-              v-model="s.host"
-              type="text"
-              class="[grid-area:host]"
-              :placeholder="t('groupEditor.forgeSourcesHost')"
-            />
-            <RcSelect
-              v-model="s.type"
-              class="w-[110px] [grid-area:type]"
-              :options="[
-                { label: 'GitHub', value: 'github' },
-                { label: 'Gitea', value: 'gitea' },
-              ]"
-            />
+            <div class="f-host">
+              <RcInput
+                v-model="s.host"
+                type="text"
+                :placeholder="t('groupEditor.forgeSourcesHost')"
+              />
+            </div>
+            <div class="f-type">
+              <RcSelect
+                v-model="s.type"
+                :options="[
+                  { label: 'GitHub', value: 'github' },
+                  { label: 'Gitea', value: 'gitea' },
+                ]"
+              />
+            </div>
             <RcButton
               type="button"
-              variant="destructive"
+              variant="ghost"
+              color="error"
               size="icon"
-              class="[grid-area:del] justify-self-end"
-              @click="form.forgeSources.splice(i, 1)"
+              class="f-del h-9 w-9 text-muted hover:text-bad"
+              :title="t('groupEditor.forgeSourcesRemove')"
+              :aria-label="t('groupEditor.forgeSourcesRemove')"
+              @click="removeForgeSource(s)"
             >
-              ✕
+              <Trash2 :size="15" />
             </RcButton>
-            <RcInput
-              v-model="s.name"
-              type="text"
-              class="[grid-area:name]"
-              :placeholder="t('groupEditor.forgeSourcesName')"
-            />
+            <div class="f-name">
+              <RcInput
+                v-model="s.name"
+                type="text"
+                :placeholder="t('groupEditor.forgeSourcesName')"
+              />
+            </div>
           </div>
           <RcButton type="button" variant="ghost" class="add-filter" @click="addForgeSource">
             {{ t("groupEditor.forgeSourcesAdd") }}
@@ -159,12 +165,14 @@
             >{{ t("groupEditor.installationId") }}
             <span class="lbl-note">{{ t("groupEditor.installationIdNote") }}</span></label
           >
-          <RcInput
-            v-model="form.installationId"
-            type="text"
-            inputmode="numeric"
-            :placeholder="t('groupEditor.installationIdPlaceholder')"
-          />
+          <div class="ctl-md">
+            <RcInput
+              v-model="form.installationId"
+              type="text"
+              inputmode="numeric"
+              :placeholder="t('groupEditor.installationIdPlaceholder')"
+            />
+          </div>
           <div class="hint">{{ t("groupEditor.installationIdHint") }}</div>
         </div>
       </section>
@@ -175,48 +183,52 @@
             >{{ t("groupEditor.logTarget") }}
             <span class="lbl-note">{{ t("groupEditor.logTargetNote") }}</span></label
           >
-          <RcSelect
-            :model-value="form.logPlatform || 'none'"
-            :options="[
-              { label: t('groupEditor.logDisabled'), value: 'none' },
-              { label: 'Discord', value: 'discord' },
-              { label: 'Telegram', value: 'telegram' },
-              { label: t('groupEditor.logFeishu'), value: 'feishu' },
-            ]"
-            @update:model-value="
-              form.logPlatform = ($event === 'none' ? '' : $event) as
-                '' | 'discord' | 'telegram' | 'feishu'
-            "
-          />
-          <template v-if="form.logPlatform === 'discord'">
-            <RcInput
-              v-model="form.logChannelId"
-              type="text"
-              class="mt-2"
-              :placeholder="t('routeEditor.channelPlaceholder')"
+          <div class="ctl-md">
+            <RcSelect
+              :model-value="form.logPlatform || 'none'"
+              :options="[
+                { label: t('groupEditor.logDisabled'), value: 'none' },
+                { label: 'Discord', value: 'discord' },
+                { label: 'Telegram', value: 'telegram' },
+                { label: t('groupEditor.logFeishu'), value: 'feishu' },
+              ]"
+              @update:model-value="
+                form.logPlatform = ($event === 'none' ? '' : $event) as
+                  '' | 'discord' | 'telegram' | 'feishu'
+              "
             />
-            <RcInput
-              v-model="form.logThreadId"
-              type="text"
-              class="mt-2"
-              :placeholder="t('routeEditor.threadPlaceholder')"
-            />
-          </template>
-          <template v-else-if="form.logPlatform === 'telegram' || form.logPlatform === 'feishu'">
-            <RcInput
-              v-model="form.logChatId"
-              type="text"
-              class="mt-2"
-              :placeholder="t('routeEditor.chatPlaceholder')"
-            />
-            <RcInput
-              v-if="form.logPlatform === 'telegram'"
-              v-model="form.logTopicId"
-              type="text"
-              class="mt-2"
-              :placeholder="t('routeEditor.topicPlaceholder')"
-            />
-          </template>
+          </div>
+          <div v-if="form.logPlatform" class="ctl-stack">
+            <template v-if="form.logPlatform === 'discord'">
+              <RcInput
+                v-model="form.logChannelId"
+                type="text"
+                :placeholder="t('routeEditor.channelPlaceholder')"
+              />
+              <RcInput
+                v-model="form.logThreadId"
+                type="text"
+                :placeholder="t('routeEditor.threadPlaceholder')"
+              />
+            </template>
+            <template v-else>
+              <RcInput
+                v-model="form.logChatId"
+                type="text"
+                :placeholder="
+                  form.logPlatform === 'telegram'
+                    ? t('routeEditor.chatPlaceholder')
+                    : t('routeEditor.feishuChatPlaceholder')
+                "
+              />
+              <RcInput
+                v-if="form.logPlatform === 'telegram'"
+                v-model="form.logTopicId"
+                type="text"
+                :placeholder="t('routeEditor.topicPlaceholder')"
+              />
+            </template>
+          </div>
           <div class="hint">{{ t("groupEditor.logTargetHint") }}</div>
         </div>
       </section>
@@ -237,9 +249,11 @@
 
 <script setup lang="ts">
 import { reactive, watch } from "vue";
+import { Trash2 } from "lucide-vue-next";
 import type { ForgeSource, Group } from "~/types";
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
 
 const props = defineProps<{
   open: boolean;
@@ -285,6 +299,15 @@ const owners = computed({
 function addForgeSource(): void {
   form.forgeSources.push({ host: "", type: "github" });
 }
+
+async function removeForgeSource(source: ForgeSource): Promise<void> {
+  const label = source.host.trim() || source.name?.trim();
+  if (label && !(await confirm({ title: t("confirm.removeForgeSource", { name: label }) }))) {
+    return;
+  }
+  const index = form.forgeSources.indexOf(source);
+  if (index >= 0) form.forgeSources.splice(index, 1);
+}
 function toggleProvider(p: "github" | "gitea", checked: boolean): void {
   form.providers = checked
     ? [...new Set([...form.providers, p])]
@@ -320,8 +343,12 @@ function close(): void {
   emit("close");
 }
 
+// A click on the backdrop must not discard what has been typed so far.
+const { isBackdropClose } = useBackdropGuard(() => props.open, ".editor-dialog");
+useDialogFocus(() => props.open, ".editor-dialog");
+
 function onOpenChange(open: boolean): void {
-  if (!open) close();
+  if (!open && !isBackdropClose()) close();
 }
 
 function save(): void {

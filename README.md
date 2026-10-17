@@ -103,11 +103,11 @@ Routes are stored in D1 (`d1_routes`, seeded from legacy KV `config:routes` on f
 ]
 ```
 
-`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (optional `topicId` for a topic). A route may also set `stop: true` (skip later routes). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.elysola.org/guide/routes) and [Groups & Access Control](https://webhooker.docs.elysola.org/guide/groups) guides for the full schema.
+`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (optional `topicId` for a topic). A route may also set `stop: true` (skip later routes of its group). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.elysola.org/guide/routes) and [Groups & Access Control](https://webhooker.docs.elysola.org/guide/groups) guides for the full schema.
 
 ### Web UI (`/admin`)
 
-The built-in config console lets you manage routes and groups in the browser (add / edit / delete / toggle / reorder), inspect send logs, manage group members and invite links, and read the audit log — no KV access needed:
+The built-in config console lets you manage routes and groups in the browser (add / edit / delete / toggle / drag to reorder — the saved order is the evaluation order), inspect send logs, manage group members and invite links, and read the audit log — no KV access needed:
 
 1. Set `ADMIN_USER_IDS` to the GitHub user IDs (or logins) allowed to manage the console, e.g. `ADMIN_USER_IDS=12345,RhenCloud`.
 2. Visit `/admin` and sign in with GitHub. Users with no access get `403` — unless `ALLOW_SELF_SIGNUP=1` (they receive a personal group) or they follow a group invite link.

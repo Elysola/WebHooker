@@ -61,10 +61,15 @@ export async function dispatchEvent(
     if (!groupAcceptsOwners(group, owners)) return false;
     return groupAcceptsProvider(group, event.provider);
   };
-  const matched = config.routes.filter(
-    (route) => !route.fallback && matchRoute(route, event) && accepted(route),
+  // `stop` and `fallback` act within a route's own group (its routing table), so
+  // one group's routes can never silence another group's.
+  const scopeOf = (route: Route): string => route.groupId ?? "";
+  const regularMatched = new Set(
+    config.routes
+      .filter((route) => !route.fallback && matchRoute(route, event) && accepted(route))
+      .map(scopeOf),
   );
-  const anyRegularMatched = matched.length > 0;
+  const stopped = new Set<string>();
 
   const attempts: DispatchAttempt[] = [];
   const sendLogs: SendRecord[] = [];
@@ -88,16 +93,18 @@ export async function dispatchEvent(
 
   const tasks: Promise<void>[] = [];
   for (const route of config.routes) {
-    if (!accepted(route)) continue;
+    const scope = scopeOf(route);
+    if (stopped.has(scope) || !accepted(route)) continue;
     if (route.fallback) {
-      if (!anyRegularMatched && matchRoute(route, event)) {
+      if (!regularMatched.has(scope) && matchRoute(route, event)) {
         tasks.push(processRoute(route));
+        if (route.stop) stopped.add(scope);
       }
       continue;
     }
     if (matchRoute(route, event)) {
       tasks.push(processRoute(route));
-      if (route.stop) break;
+      if (route.stop) stopped.add(scope);
     }
   }
   await Promise.allSettled(tasks);

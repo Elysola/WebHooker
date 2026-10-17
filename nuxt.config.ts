@@ -37,6 +37,16 @@ export default defineNuxtConfig({
   },
   vite: {
     plugins: [tailwindcss()],
+    // App components use reka-ui primitives directly, alongside the copy
+    // @elysola/ui imports. Pre-bundling it up front keeps both on one
+    // dev instance; otherwise a mid-session discovery splits them and dialogs
+    // and popovers stop stacking (Escape / outside clicks reach the wrong layer).
+    // `debug` and `extend` are CommonJS packages @elysola/ui's markdown stack
+    // (micromark, unified) imports; served unbundled in dev they lack a default
+    // export and the console fails to start.
+    optimizeDeps: {
+      include: ["reka-ui", "debug", "extend"],
+    },
   },
   devtools: { enabled: false },
   runtimeConfig: {

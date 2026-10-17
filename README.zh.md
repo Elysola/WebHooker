@@ -103,11 +103,11 @@ bunx wrangler dev    # 启动本地开发服务器
 ]
 ```
 
-`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（可选 `topicId` 指向子话题）。路由还可设置 `stop: true`（跳过后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.elysola.org/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.elysola.org/zh/guide/groups)指南。
+`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（可选 `topicId` 指向子话题）。路由还可设置 `stop: true`（跳过本分组的后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.elysola.org/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.elysola.org/zh/guide/groups)指南。
 
 ### Web 控制台（`/admin`）
 
-内置的配置控制台让你在浏览器中管理路由与分组（新增 / 编辑 / 删除 / 开关 / 排序）、查看发送日志、管理组成员与邀请链接、阅读审计日志——无需直接操作 D1 或 KV：
+内置的配置控制台让你在浏览器中管理路由与分组（新增 / 编辑 / 删除 / 开关 / 拖动排序——保存的顺序即评估顺序）、查看发送日志、管理组成员与邀请链接、阅读审计日志——无需直接操作 D1 或 KV：
 
 1. 设置 `ADMIN_USER_IDS` 为允许管理控制台的 GitHub 用户 ID（或登录名），例如 `ADMIN_USER_IDS=12345,RhenCloud`。
 2. 访问 `/admin` 并用 GitHub 登录。无任何权限的用户收到 `403`——除非开启 `ALLOW_SELF_SIGNUP=1`（自动获得个人分组）或通过分组邀请链接加入。

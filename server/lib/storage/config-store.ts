@@ -48,12 +48,32 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
   let routesCache: { routes: Route[]; expiresAt: number } | null = null;
   let groupsCache: { groups: Group[]; expiresAt: number } | null = null;
 
+  /**
+   * Run a statement that uses the `position` column (migration 0012) and fall
+   * back to its legacy form only when the database confirms the column is
+   * missing. Any other error propagates exactly as before, and nothing is
+   * remembered, so a database migrated later is picked up on the next call.
+   */
+  async function withPosition<T>(run: (positioned: boolean) => Promise<T>): Promise<T> {
+    try {
+      return await run(true);
+    } catch (err) {
+      // SQLite says "no such column: position" for reads and "has no column
+      // named position" for inserts.
+      if (!/no such column: position|no column named position/i.test(String(err))) throw err;
+      return run(false);
+    }
+  }
+
   async function loadRoutesFromD1(): Promise<Route[]> {
-    const stmt = db.prepare(
-      "SELECT id, group_id, name, enabled, filters, targets, stop, fallback, discord_role_ids, ast FROM d1_routes ORDER BY id",
-    );
-    if (typeof stmt.all !== "function") return [];
-    const { results } = await stmt.all<D1RouteRow>();
+    const results = await withPosition(async (positioned) => {
+      const order = positioned ? "group_id, position, id" : "id";
+      const stmt = db.prepare(
+        `SELECT id, group_id, name, enabled, filters, targets, stop, fallback, discord_role_ids, ast FROM d1_routes ORDER BY ${order}`,
+      );
+      if (typeof stmt.all !== "function") return [];
+      return (await stmt.all<D1RouteRow>()).results;
+    });
     if (!results || results.length === 0) return [];
     return results.flatMap((r) => {
       const filters = parseJson<Route["filters"]>(r.filters, `route:${r.id}:filters`);
@@ -115,10 +135,14 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
 
   function routeStatements(
     routes: Route[],
+    positioned: boolean,
     existingRouteKeys?: Set<string>,
   ): D1PreparedStatement[] {
     const now = Date.now();
     const statements: D1PreparedStatement[] = [];
+    // A route's position is its index among the routes of its own group, so
+    // saving one group never shifts the order of another.
+    const nextPosition = new Map<string, number>();
 
     // If we have existing routes, delete those not in the new set
     if (existingRouteKeys) {
@@ -138,6 +162,43 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
 
     // Upsert all routes
     for (const r of routes) {
+      const groupId = r.groupId ?? "";
+      const values = [
+        r.id,
+        groupId,
+        r.name,
+        r.enabled ? 1 : 0,
+        JSON.stringify(r.filters),
+        JSON.stringify(r.targets),
+        r.stop ? 1 : 0,
+        r.fallback ? 1 : 0,
+        r.discordRoleIds ? JSON.stringify(r.discordRoleIds) : null,
+        r.ast ? JSON.stringify(r.ast) : null,
+      ];
+      if (positioned) {
+        const position = nextPosition.get(groupId) ?? 0;
+        nextPosition.set(groupId, position + 1);
+        statements.push(
+          db
+            .prepare(
+              `INSERT INTO d1_routes (id, group_id, name, enabled, filters, targets, stop, fallback, discord_role_ids, ast, position, version, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+               ON CONFLICT(id, group_id) DO UPDATE SET
+                 name = excluded.name,
+                 enabled = excluded.enabled,
+                 filters = excluded.filters,
+                 targets = excluded.targets,
+                 stop = excluded.stop,
+                 fallback = excluded.fallback,
+                 discord_role_ids = excluded.discord_role_ids,
+                 ast = excluded.ast,
+                 position = excluded.position,
+                 updated_at = excluded.updated_at`,
+            )
+            .bind(...values, position, now, now),
+        );
+        continue;
+      }
       statements.push(
         db
           .prepare(
@@ -154,20 +215,7 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
                ast = excluded.ast,
                updated_at = excluded.updated_at`,
           )
-          .bind(
-            r.id,
-            r.groupId ?? "",
-            r.name,
-            r.enabled ? 1 : 0,
-            JSON.stringify(r.filters),
-            JSON.stringify(r.targets),
-            r.stop ? 1 : 0,
-            r.fallback ? 1 : 0,
-            r.discordRoleIds ? JSON.stringify(r.discordRoleIds) : null,
-            r.ast ? JSON.stringify(r.ast) : null,
-            now,
-            now,
-          ),
+          .bind(...values, now, now),
       );
     }
 
@@ -214,7 +262,7 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
 
   async function seedRoutesToD1(routes: Route[]): Promise<void> {
     if (routes.length === 0) return;
-    await db.batch(routeStatements(routes));
+    await withPosition((positioned) => db.batch(routeStatements(routes, positioned)));
   }
 
   async function seedGroupsToD1(groups: Group[]): Promise<void> {
@@ -269,7 +317,7 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
 
     async saveRoutes(routes: Route[]): Promise<void> {
       try {
-        await db.batch(routeStatements(routes));
+        await withPosition((positioned) => db.batch(routeStatements(routes, positioned)));
         await syncRoutesToKV(routes, KV_CACHE_TTL);
       } catch (err) {
         log.warn({ err }, "D1 routes unavailable, falling back to KV");

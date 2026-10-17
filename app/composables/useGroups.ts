@@ -8,6 +8,11 @@ export function useGroupsApi() {
   const roles = ref<Record<string, GroupRole>>({});
   const loading = ref(false);
   const error = ref("");
+  /** A load has succeeded: an id missing from `groups` really is unknown. */
+  const loaded = ref(false);
+  // Bumped by every load and save, so only the latest request may land: a
+  // load that started before a save must not bring back the old groups.
+  let request = 0;
 
   function roleOf(groupId: string): GroupRole | undefined {
     return isSuper.value ? "owner" : roles.value[groupId];
@@ -24,6 +29,7 @@ export function useGroupsApi() {
   }
 
   async function load(): Promise<void> {
+    const mine = ++request;
     loading.value = true;
     error.value = "";
     needLogin.value = false;
@@ -33,13 +39,16 @@ export function useGroupsApi() {
         isSuper?: boolean;
         roles?: Record<string, GroupRole>;
       }>("/admin/api/groups");
+      if (mine !== request) return;
       groups.value = data.groups ?? [];
       isSuper.value = data.isSuper ?? false;
       roles.value = data.roles ?? {};
+      loaded.value = true;
     } catch (err) {
-      if (!needLogin.value) error.value = err instanceof Error ? err.message : String(err);
+      if (mine === request && !needLogin.value)
+        error.value = err instanceof Error ? err.message : String(err);
     } finally {
-      loading.value = false;
+      if (mine === request) loading.value = false;
     }
   }
 
@@ -48,6 +57,8 @@ export function useGroupsApi() {
       method: "PUT",
       body: JSON.stringify({ groups: next }),
     });
+    request++;
+    loading.value = false;
     groups.value = next;
   }
 
@@ -67,6 +78,7 @@ export function useGroupsApi() {
     canEditGroup,
     canEditRoutes,
     loading,
+    loaded,
     needLogin,
     error,
     load,

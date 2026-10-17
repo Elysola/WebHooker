@@ -3,6 +3,8 @@ import { d1ConfigStore, type ConfigStore } from "../server/lib/storage/config-st
 import type { Route, Group } from "../server/lib/types";
 
 interface Stmt {
+  sql: string;
+  bound: unknown[];
   bind: (...args: unknown[]) => Stmt;
   all: () => Promise<{ results: Array<Record<string, unknown>> }>;
 }
@@ -10,6 +12,13 @@ interface Stmt {
 interface FakeDB {
   prepare: (sql: string) => Stmt;
   batch: (stmts: Stmt[]) => Promise<unknown[]>;
+}
+
+interface FakeDBOptions {
+  /** Whether `d1_routes` has the `position` column (migration 0012). */
+  positionColumn?: boolean;
+  /** How many batches fail with a transient (non-schema) error first. */
+  batchFailures?: number;
 }
 
 function route(id: string, groupId: string, overrides: Partial<Route> = {}): Route {
@@ -30,18 +39,32 @@ function group(id: string): Group {
   return { id, name: `group-${id}`, adminIds: [] };
 }
 
-function createDB(): { db: FakeDB & D1Database; routesTable: Route[]; groupsTable: Group[] } {
+function createDB(options: FakeDBOptions = {}): {
+  db: FakeDB & D1Database;
+  routesTable: Route[];
+  groupsTable: Group[];
+  queries: string[];
+  batches: Stmt[][];
+} {
   const routesTable: Route[] = [];
   const groupsTable: Group[] = [];
+  const queries: string[] = [];
+  const batches: Stmt[][] = [];
+  let batchFailures = options.batchFailures ?? 0;
   const db: FakeDB = {
     prepare(sql: string): Stmt {
-      let _bound: unknown[] = [];
       const stmt: Stmt = {
+        sql,
+        bound: [],
         bind(...args: unknown[]): Stmt {
-          _bound = args;
+          stmt.bound = args;
           return stmt;
         },
         async all(): Promise<{ results: Array<Record<string, unknown>> }> {
+          queries.push(sql);
+          if (sql.includes("position") && !options.positionColumn) {
+            throw new Error("D1_ERROR: no such column: position at offset 33: SQLITE_ERROR");
+          }
           if (sql.includes("FROM d1_routes")) {
             return {
               results: routesTable.map((r) => ({
@@ -74,11 +97,25 @@ function createDB(): { db: FakeDB & D1Database; routesTable: Route[]; groupsTabl
       return stmt;
     },
     async batch(stmts: Stmt[]): Promise<unknown[]> {
-      void stmts;
+      batches.push(stmts);
+      if (batchFailures > 0) {
+        batchFailures--;
+        throw new Error("D1_ERROR: network connection lost");
+      }
+      if (!options.positionColumn && stmts.some((st) => st.sql.includes("position,"))) {
+        throw new Error("D1_ERROR: table d1_routes has no column named position: SQLITE_ERROR");
+      }
       return [];
     },
   };
-  return { db: db as FakeDB & D1Database, routesTable, groupsTable };
+  return { db: db as FakeDB & D1Database, routesTable, groupsTable, queries, batches };
+}
+
+/** Bound `(id, position)` pairs of every route upsert in a batch. */
+function upsertPositions(stmts: Stmt[]): Array<[unknown, unknown]> {
+  return stmts
+    .filter((s) => s.sql.includes("INSERT INTO d1_routes"))
+    .map((s) => [s.bound[0], s.sql.includes("position") ? s.bound[10] : undefined]);
 }
 
 function createKV(): { kv: KVNamespace; store: Map<string, string> } {
@@ -170,6 +207,66 @@ describe("d1ConfigStore", () => {
     cfg.invalidateCache();
     const second = await cfg.loadRoutes();
     expect(second).toHaveLength(2);
+  });
+
+  it("persists the per-group route order when the position column exists", async () => {
+    const { db, batches } = createDB({ positionColumn: true });
+    const { kv } = createKV();
+    const cfg: ConfigStore = d1ConfigStore(db, kv);
+    await cfg.saveRoutes([route("b", "g1"), route("x", "g2"), route("a", "g1")]);
+    expect(upsertPositions(batches[0]!)).toEqual([
+      ["b", 0],
+      ["x", 0],
+      ["a", 1],
+    ]);
+  });
+
+  it("loads routes ordered by group and position when the column exists", async () => {
+    const { db, queries } = createDB({ positionColumn: true });
+    const { kv } = createKV();
+    await d1ConfigStore(db, kv).loadRoutes();
+    expect(queries.some((q) => q.includes("FROM d1_routes ORDER BY group_id, position, id"))).toBe(
+      true,
+    );
+  });
+
+  it("falls back to the legacy id order and inserts on an unmigrated database", async () => {
+    const { db, queries, batches } = createDB();
+    const { kv } = createKV();
+    const cfg: ConfigStore = d1ConfigStore(db, kv);
+    await cfg.loadRoutes();
+    expect(queries.at(-1)).toContain("FROM d1_routes ORDER BY id");
+    await cfg.saveRoutes([route("r1", "g1")]);
+    expect(upsertPositions(batches.at(-1)!)).toEqual([["r1", undefined]]);
+  });
+
+  it("picks up the position column once the database is migrated", async () => {
+    const options: FakeDBOptions = {};
+    const { db, queries } = createDB(options);
+    const { kv } = createKV();
+    const cfg: ConfigStore = d1ConfigStore(db, kv);
+    await cfg.loadRoutes();
+    expect(queries.at(-1)).toContain("ORDER BY id");
+    options.positionColumn = true;
+    cfg.invalidateCache();
+    await cfg.loadRoutes();
+    expect(queries.at(-1)).toContain("ORDER BY group_id, position, id");
+  });
+
+  it("never retries without positions when D1 fails for another reason", async () => {
+    const { db, batches } = createDB({ positionColumn: true, batchFailures: 1 });
+    const { kv, store } = createKV();
+    const cfg: ConfigStore = d1ConfigStore(db, kv);
+    const routes = [route("b", "g1"), route("a", "g1")];
+    await cfg.saveRoutes(routes);
+    // Only the positioned batch was attempted; the save took the existing
+    // "D1 unavailable" path instead of writing rows that lose the order.
+    expect(batches).toHaveLength(1);
+    expect(upsertPositions(batches[0]!)).toEqual([
+      ["b", 0],
+      ["a", 1],
+    ]);
+    expect(store.get("config:routes")).toBe(JSON.stringify(routes));
   });
 
   it("updating groups does not cascade-delete routes", async () => {

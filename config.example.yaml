@@ -106,7 +106,7 @@ routes:
   #     - platform: telegram
   #       chatId: "-1001234567890"
 
-  # Stop routes stop processing further routes when matched.
+  # Stop routes stop processing further routes of their group when matched.
   # - id: exclusive-push
   #   name: "Exclusive Push"
   #   enabled: true

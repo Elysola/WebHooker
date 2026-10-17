@@ -63,7 +63,9 @@ WebHooker ships with a built-in config console at `/admin` for managing routes, 
 
 For local debugging only, set `DEBUG_MODE=true` to bypass GitHub OAuth and grant complete console access. Do not set this variable in a deployed environment.
 
-The console is served as an SPA at `/admin`; its tabs are deep-linkable via the URL path (`/admin/groups`, `/admin/logs`, `/admin/audit`). URLs outside `/admin` that do not match an endpoint return a plain `404` instead of the console.
+The console is served as an SPA at `/admin`; its tabs are deep-linkable via the URL path (`/admin/groups`, `/admin/logs`, `/admin/audit`), and each group's routes page has its own URL (`/admin/groups/{groupId}`). Pages are browser history entries: use the browser's (or device's) back button to return from a group to the group list; leaving a page with an open editor or an unsaved route order asks for confirmation first. Unknown console paths return the console's 404 page. URLs outside `/admin` that do not match an endpoint return a plain `404` instead of the console.
+
+Destructive actions — deleting routes, groups, filter conditions, fragments, targets or forge hosts, removing members, revoking invites, disabling a group's webhook — ask for confirmation in an in-app dialog (empty, never-filled rows are removed directly). The route and group editors ignore clicks on the backdrop so unsaved input is never lost; close them with Cancel, ✕ or <kbd>Esc</kbd>.
 
 All management endpoints (`/admin/api/*`) are documented in the [Admin API](../api/admin). Saved routes and groups are persisted to D1 (`d1_routes` / `d1_groups`) immediately, the KV cache is invalidated and the config cache is refreshed so the webhook pipeline picks them up on the next run.
 

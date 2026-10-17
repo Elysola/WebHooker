@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, provide, reactive, ref, watch } from "vue";
+import { Trash2 } from "lucide-vue-next";
 import type { Filter, FilterNode, NamedFragment, Route, RouteTarget, RouteTemplate } from "~/types";
 import { FRAGMENT_PRESETS, ROUTE_TEMPLATES } from "~/types";
 import type { NodeForm } from "~/composables/useFilterNode";
 import {
+  FILTER_SCOPE_EVENTS,
   blankLeafForm,
   blankNode,
   nodeToForm,
   nodeFormToRouteFilters,
   formToNode,
+  hasPendingDraft,
+  scopeEvents,
 } from "~/composables/useFilterNode";
+import { eventOptions, validateFilterValue } from "~/utils/filter-catalog";
 
 interface TargetForm {
   platform: "discord" | "telegram" | "feishu";
@@ -26,7 +31,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (e: "close"): void; (e: "save", route: Route): void }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
+const { confirm } = useConfirm();
 
 const isEdit = computed(() => props.route != null);
 const discordRoles = computed({
@@ -39,6 +45,7 @@ const discordRoles = computed({
     form.discordRolesText = roles.join(", ");
   },
 });
+const bodyEl = ref<HTMLFormElement | null>(null);
 const filterError = ref("");
 const targetError = ref("");
 const formError = ref("");
@@ -62,8 +69,20 @@ const form = reactive({
 });
 
 const root = ref<NodeForm>(blankNode("all"));
+provide(
+  FILTER_SCOPE_EVENTS,
+  computed(() => scopeEvents(root.value)),
+);
+const eventSuggestions = computed(() => eventOptions(locale.value));
 
-const { fragments, load: loadFragments, save: saveFragments } = useFragmentsApi();
+const {
+  fragments,
+  readyFor: fragmentsReadyFor,
+  load: loadFragments,
+  save: saveFragments,
+} = useFragmentsApi();
+/** This group's fragments are loaded and no fragment write is running. */
+const fragmentsWritable = computed(() => !!props.groupId && fragmentsReadyFor(props.groupId));
 const fragmentName = ref("");
 const fragmentError = ref("");
 
@@ -72,6 +91,7 @@ const testEvent = ref("");
 const testResult = ref<{ matched: boolean; explanation: string } | null>(null);
 const testError = ref("");
 const testing = ref(false);
+const testEventInput = ref<{ hasInvalidDraft: () => boolean } | null>(null);
 
 function applyTemplate(tmpl: RouteTemplate): void {
   form.id = tmpl.id;
@@ -84,11 +104,33 @@ function addTarget(): void {
   form.targets.push(blankTarget());
 }
 
+async function removeTarget(target: TargetForm): Promise<void> {
+  const filled = [target.channelId, target.threadId, target.chatId, target.topicId].some((v) =>
+    v.trim(),
+  );
+  if (filled) {
+    const n = form.targets.indexOf(target) + 1;
+    if (!(await confirm({ title: t("confirm.removeTarget", { n }) }))) return;
+  }
+  const index = form.targets.indexOf(target);
+  if (index >= 0) form.targets.splice(index, 1);
+}
+
+function validateEventName(value: string): string | null {
+  return /^[a-z0-9_]+$/i.test(value) ? null : "valid.eventName";
+}
+
 function validateNode(nf: NodeForm): string | null {
   if (nf.kind === "leaf") {
-    if (nf.leaf.type === "field" && !nf.leaf.path.trim()) return t("routeEditor.errPath");
-    if (nf.leaf.op !== "exists" && nf.leaf.values.every((v) => !v.trim()))
-      return t("routeEditor.errValues");
+    const { type, op, path, values } = nf.leaf;
+    if (type === "field" && !path.trim()) return t("routeEditor.errPath");
+    if (type === "keyword" || op !== "exists") {
+      if (values.every((v) => !v.trim())) return t("routeEditor.errValues");
+      for (const value of values) {
+        const err = validateFilterValue(type, op, value);
+        if (err) return t("routeEditor.errInvalidValue", { value: value.trim(), reason: t(err) });
+      }
+    }
     return null;
   }
   if (nf.kind === "all" || nf.kind === "any") {
@@ -101,6 +143,12 @@ function validateNode(nf: NodeForm): string | null {
   }
   if (nf.child) return validateNode(nf.child);
   return t("routeEditor.errGroupEmpty");
+}
+
+/** Why the filter tree cannot be used as-is (unconfirmed input or an invalid value). */
+function filterTreeError(): string | null {
+  if (hasPendingDraft(root.value)) return t("routeEditor.errDraft");
+  return validateNode(root.value);
 }
 
 function collect(): Route | null {
@@ -168,20 +216,26 @@ function collect(): Route | null {
   };
 }
 
-function save(): void {
+function validated(): Route | null {
+  if (hasPendingDraft(root.value)) {
+    targetError.value = "";
+    formError.value = "";
+    filterError.value = t("routeEditor.errDraft");
+    return null;
+  }
   const route = collect();
-  if (!route) return;
+  if (!route) return null;
   if (!/^[a-z0-9][a-z0-9-]*$/.test(route.id)) {
     formError.value = t("routeEditor.errIdFormat");
-    return;
+    return null;
   }
   if (!route.name) {
     formError.value = t("routeEditor.errName");
-    return;
+    return null;
   }
   if (!route.targets.length) {
     targetError.value = t("routeEditor.errTargets");
-    return;
+    return null;
   }
   form.targets.forEach((tg, i) => {
     if ((tg.platform === "telegram" || tg.platform === "feishu") && !tg.chatId.trim()) {
@@ -190,17 +244,41 @@ function save(): void {
       targetError.value = t("routeEditor.errChannel", { n: i + 1 });
     }
   });
-  if (targetError.value) return;
-  emit("save", route);
+  return targetError.value ? null : route;
+}
+
+function save(): void {
+  const route = validated();
+  if (route) {
+    emit("save", route);
+    return;
+  }
+  // The footer button may be far from the failing section: bring the error into view.
+  nextTick(() =>
+    bodyEl.value
+      ?.querySelector("[data-save-error]")
+      ?.scrollIntoView({ block: "center", behavior: "smooth" }),
+  );
 }
 
 function close(): void {
   emit("close");
 }
 
+// A click on the backdrop must not discard what has been typed so far.
+const { isBackdropClose } = useBackdropGuard(() => props.open, ".editor-dialog");
+useDialogFocus(() => props.open, ".editor-dialog");
+
 function onOpenChange(open: boolean): void {
-  if (!open) close();
+  if (!open && !isBackdropClose()) close();
 }
+
+/**
+ * Bumped whenever the editor opens or closes. The console keeps one editor
+ * for every group, so an async result (a test run, a fragment write) only
+ * lands in the session that started it.
+ */
+let session = 0;
 
 async function runTest(): Promise<void> {
   testError.value = "";
@@ -212,24 +290,35 @@ async function runTest(): Promise<void> {
     testError.value = t("routeEditor.testInvalidJson");
     return;
   }
+  if (testEventInput.value?.hasInvalidDraft()) {
+    testError.value = t("routeEditor.testEventInvalid");
+    return;
+  }
+  const problem = filterTreeError();
+  if (problem) {
+    testError.value = problem;
+    return;
+  }
   const node = formToNode(root.value);
   if (!node) {
     testError.value = t("routeEditor.errAddFilter");
     return;
   }
+  const mine = session;
   testing.value = true;
   try {
-    testResult.value = await apiFetch<{ matched: boolean; explanation: string }>(
+    const result = await apiFetch<{ matched: boolean; explanation: string }>(
       "/admin/api/test-match",
       {
         method: "POST",
         body: JSON.stringify({ node, event: testEvent.value.trim() || undefined, payload }),
       },
     );
+    if (mine === session) testResult.value = result;
   } catch (err) {
-    testError.value = err instanceof Error ? err.message : String(err);
+    if (mine === session) testError.value = err instanceof Error ? err.message : String(err);
   } finally {
-    testing.value = false;
+    if (mine === session) testing.value = false;
   }
 }
 
@@ -259,35 +348,59 @@ async function saveAsFragment(): Promise<void> {
     return;
   }
   if (!props.groupId) return;
+  // A save replaces the group's whole list: never from one not loaded yet.
+  if (!fragmentsReadyFor(props.groupId)) {
+    fragmentError.value = t("routeEditor.fragmentsNotReady");
+    return;
+  }
+  const problem = filterTreeError();
+  if (problem) {
+    fragmentError.value = problem;
+    return;
+  }
   const node = formToNode(root.value);
   if (!node) {
     fragmentError.value = t("routeEditor.errAddFilter");
     return;
   }
+  const groupId = props.groupId;
   const id = `frag-${Math.random().toString(36).slice(2, 10)}`;
   const next: NamedFragment[] = [
     ...fragments.value.filter((f) => f.id !== id),
-    { id, groupId: props.groupId, name, node },
+    { id, groupId, name, node },
   ];
+  const mine = session;
   try {
-    await saveFragments(props.groupId, next);
-    fragmentName.value = "";
+    await saveFragments(groupId, next);
+    if (mine === session) fragmentName.value = "";
   } catch (err) {
-    fragmentError.value = err instanceof Error ? err.message : String(err);
+    if (mine === session) fragmentError.value = err instanceof Error ? err.message : String(err);
   }
 }
 
-function deleteFragment(frag: NamedFragment): void {
-  if (!props.groupId) return;
+async function deleteFragment(frag: NamedFragment): Promise<void> {
+  const groupId = props.groupId;
+  if (!groupId) return;
+  const mine = session;
+  if (!(await confirm({ title: t("confirm.deleteFragment", { name: frag.name }) }))) return;
+  if (mine !== session) return;
+  fragmentError.value = "";
+  if (props.groupId !== groupId || !fragmentsReadyFor(groupId)) {
+    fragmentError.value = t("routeEditor.fragmentsNotReady");
+    return;
+  }
   const next = fragments.value.filter((f) => f.id !== frag.id);
-  saveFragments(props.groupId, next).catch((err) => {
-    fragmentError.value = err instanceof Error ? err.message : String(err);
-  });
+  try {
+    await saveFragments(groupId, next);
+  } catch (err) {
+    if (mine === session) fragmentError.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 watch(
   () => props.open,
   (open) => {
+    session++;
     if (!open) return;
     const r = props.route;
     form.id = r?.id ?? "";
@@ -321,6 +434,7 @@ watch(
     testEvent.value = "";
     testResult.value = null;
     testError.value = "";
+    testing.value = false;
     fragmentName.value = "";
     fragmentError.value = "";
     if (props.groupId) loadFragments(props.groupId);
@@ -332,7 +446,7 @@ watch(
   <RcDialog
     :open="open"
     :title="isEdit ? t('routeEditor.editTitle') : t('routeEditor.newTitle')"
-    class="editor-dialog flex flex-col gap-0 max-h-[calc(100dvh-2rem)] overflow-hidden p-0 max-w-3xl"
+    class="editor-dialog flex flex-col gap-0 max-h-[calc(100dvh-2rem)] overflow-hidden p-0 max-w-4xl"
     @update:open="onOpenChange"
   >
     <template #header>
@@ -344,7 +458,7 @@ watch(
       </div>
     </template>
 
-    <form class="editor-body" @submit.prevent="save">
+    <form ref="bodyEl" class="editor-body" @submit.prevent="save">
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionBasic") }}</h3>
         <div v-if="!isEdit" class="templates">
@@ -360,29 +474,33 @@ watch(
             {{ t(tmpl.nameKey) }}
           </RcButton>
         </div>
-        <div class="field">
-          <label>{{ t("routeEditor.name") }}</label>
-          <RcInput v-model="form.name" :placeholder="t('routeEditor.namePlaceholder')" required />
-        </div>
-        <div class="field">
-          <label>{{ t("routeEditor.id") }}</label>
-          <RcInput v-model="form.id" placeholder="my-route" required />
-          <div class="hint">{{ t("routeEditor.idHint") }}</div>
+        <div class="row2">
+          <div class="field">
+            <label>{{ t("routeEditor.name") }}</label>
+            <RcInput v-model="form.name" :placeholder="t('routeEditor.namePlaceholder')" required />
+          </div>
+          <div class="field">
+            <label>{{ t("routeEditor.id") }}</label>
+            <RcInput v-model="form.id" placeholder="my-route" required />
+            <div class="hint">{{ t("routeEditor.idHint") }}</div>
+          </div>
         </div>
       </section>
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionOptions") }}</h3>
-        <div class="field inline">
-          <RcSwitch v-model="form.enabled" :label="t('routeEditor.enabled')" />
-        </div>
-        <div class="field inline">
-          <RcCheckbox v-model="form.fallback" :label="t('routeEditor.fallback')" />
-          <span class="lbl-note">{{ t("routeEditor.fallbackHint") }}</span>
-        </div>
-        <div class="field inline">
-          <RcCheckbox v-model="form.stop" :label="t('routeEditor.stop')" />
-          <span class="lbl-note">{{ t("routeEditor.stopHint") }}</span>
+        <div class="option-list">
+          <div class="option-row">
+            <RcSwitch v-model="form.enabled" :label="t('routeEditor.enabled')" />
+          </div>
+          <div class="option-row">
+            <RcCheckbox v-model="form.fallback" :label="t('routeEditor.fallback')" />
+            <p class="option-hint">{{ t("routeEditor.fallbackHint") }}</p>
+          </div>
+          <div class="option-row">
+            <RcCheckbox v-model="form.stop" :label="t('routeEditor.stop')" />
+            <p class="option-hint">{{ t("routeEditor.stopHint") }}</p>
+          </div>
         </div>
         <div class="field">
           <label>{{ t("routeEditor.discordRoles") }}</label>
@@ -397,19 +515,23 @@ watch(
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionFilters") }}</h3>
-        <div class="field">
-          <label>{{ t("routeEditor.filters") }}</label>
-        </div>
-        <div class="field">
-          <FilterNodeEditor :node="root" />
-        </div>
-        <div v-if="filterError" class="err">{{ filterError }}</div>
+        <FilterNodeEditor :node="root" />
+        <div v-if="filterError" class="err" data-save-error>{{ filterError }}</div>
       </section>
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.testMatch") }}</h3>
-        <div class="field">
-          <RcInput v-model="testEvent" :placeholder="t('routeEditor.testEvent')" />
+        <div class="field test-event">
+          <FilterCombobox
+            ref="testEventInput"
+            :model-value="testEvent"
+            :options="eventSuggestions"
+            creatable
+            :validate="validateEventName"
+            :placeholder="t('routeEditor.testEvent')"
+            :label="t('routeEditor.testEvent')"
+            @update:model-value="testEvent = typeof $event === 'string' ? $event : ''"
+          />
         </div>
         <div class="field">
           <RcTextarea
@@ -467,21 +589,33 @@ watch(
             </RcButton>
             <RcButton
               type="button"
-              variant="destructive"
+              variant="ghost"
+              color="error"
               size="icon"
+              class="h-8 w-8 text-muted hover:text-bad"
+              :disabled="!fragmentsWritable"
               :title="t('routeEditor.fragmentsDelete')"
+              :aria-label="t('routeEditor.fragmentsDelete')"
               @click="deleteFragment(frag)"
             >
-              ✕
+              <Trash2 :size="15" />
             </RcButton>
           </div>
         </div>
-        <div class="field fragment-save">
-          <RcInput
-            v-model="fragmentName"
-            :placeholder="t('routeEditor.fragmentsNamePlaceholder')"
-          />
-          <RcButton type="button" variant="ghost" @click="saveAsFragment">
+        <div class="fragment-save">
+          <div class="fragment-save-input">
+            <RcInput
+              v-model="fragmentName"
+              :placeholder="t('routeEditor.fragmentsNamePlaceholder')"
+            />
+          </div>
+          <RcButton
+            type="button"
+            variant="ghost"
+            class="shrink-0 whitespace-nowrap"
+            :disabled="!fragmentsWritable"
+            @click="saveAsFragment"
+          >
             {{ t("routeEditor.fragmentsSave") }}
           </RcButton>
         </div>
@@ -490,65 +624,85 @@ watch(
 
       <section class="editor-section">
         <h3 class="editor-section-title">{{ t("routeEditor.sectionTargets") }}</h3>
-        <div v-for="(tg, i) in form.targets" :key="i" class="target-row">
-          <RcSelect
-            v-model="tg.platform"
-            class="[grid-area:select]"
-            :options="[
-              { label: 'Discord', value: 'discord' },
-              { label: 'Telegram', value: 'telegram' },
-              { label: t('routeEditor.platformFeishu'), value: 'feishu' },
-            ]"
-          />
+        <div v-for="(tg, i) in form.targets" :key="i" class="target-card">
+          <div class="target-card-head">
+            <div class="target-platform">
+              <RcSelect
+                v-model="tg.platform"
+                :options="[
+                  { label: 'Discord', value: 'discord' },
+                  { label: 'Telegram', value: 'telegram' },
+                  { label: t('routeEditor.platformFeishu'), value: 'feishu' },
+                ]"
+              />
+            </div>
+            <RcButton
+              type="button"
+              variant="ghost"
+              color="error"
+              size="icon"
+              class="h-8 w-8 text-muted hover:text-bad"
+              :title="t('routeEditor.removeTarget')"
+              :aria-label="t('routeEditor.removeTarget')"
+              @click="removeTarget(tg)"
+            >
+              <Trash2 :size="15" />
+            </RcButton>
+          </div>
           <template v-if="tg.platform === 'discord'">
-            <RcInput
-              v-model="tg.channelId"
-              class="[grid-area:in1]"
-              :placeholder="t('routeEditor.channelPlaceholder')"
-            />
-            <RcInput
-              v-model="tg.threadId"
-              class="[grid-area:in2]"
-              :placeholder="t('routeEditor.threadPlaceholder')"
-            />
-          </template>
-          <template v-else-if="tg.platform === 'telegram'">
-            <RcInput
-              v-model="tg.chatId"
-              class="[grid-area:in1]"
-              :placeholder="t('routeEditor.chatPlaceholder')"
-            />
-            <RcInput
-              v-model="tg.topicId"
-              class="[grid-area:in2]"
-              :placeholder="t('routeEditor.topicPlaceholder')"
-            />
+            <div class="target-field">
+              <label :for="`target-${i}-channel`">{{ t("routeEditor.channel") }}</label>
+              <RcInput
+                :id="`target-${i}-channel`"
+                v-model="tg.channelId"
+                :placeholder="t('routeEditor.channelPlaceholder')"
+              />
+            </div>
+            <div class="target-field">
+              <label :for="`target-${i}-thread`"
+                >{{ t("routeEditor.thread") }}
+                <span class="lbl-note">{{ t("routeEditor.threadNote") }}</span></label
+              >
+              <RcInput
+                :id="`target-${i}-thread`"
+                v-model="tg.threadId"
+                :placeholder="t('routeEditor.threadPlaceholder')"
+              />
+            </div>
           </template>
           <template v-else>
-            <RcInput
-              v-model="tg.chatId"
-              class="[grid-area:in1]"
-              :placeholder="t('routeEditor.feishuChatPlaceholder')"
-            />
+            <div class="target-field">
+              <label :for="`target-${i}-chat`">{{ t("routeEditor.chat") }}</label>
+              <RcInput
+                :id="`target-${i}-chat`"
+                v-model="tg.chatId"
+                :placeholder="
+                  tg.platform === 'telegram'
+                    ? t('routeEditor.chatPlaceholder')
+                    : t('routeEditor.feishuChatPlaceholder')
+                "
+              />
+            </div>
+            <div v-if="tg.platform === 'telegram'" class="target-field">
+              <label :for="`target-${i}-topic`"
+                >{{ t("routeEditor.topic") }}
+                <span class="lbl-note">{{ t("routeEditor.topicNote") }}</span></label
+              >
+              <RcInput
+                :id="`target-${i}-topic`"
+                v-model="tg.topicId"
+                :placeholder="t('routeEditor.topicPlaceholder')"
+              />
+            </div>
           </template>
-          <RcButton
-            type="button"
-            variant="destructive"
-            size="icon"
-            class="[grid-area:del] justify-self-end"
-            :title="t('routeEditor.remove')"
-            @click="form.targets.splice(i, 1)"
-          >
-            ✕
-          </RcButton>
         </div>
         <RcButton type="button" variant="ghost" class="add-filter" @click="addTarget">
           {{ t("routeEditor.addTarget") }}
         </RcButton>
-        <div v-if="targetError" class="err">{{ targetError }}</div>
+        <div v-if="targetError" class="err" data-save-error>{{ targetError }}</div>
       </section>
 
-      <div v-if="formError" class="err">{{ formError }}</div>
+      <div v-if="formError" class="err" data-save-error>{{ formError }}</div>
     </form>
 
     <template #footer>

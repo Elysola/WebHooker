@@ -89,7 +89,7 @@ function fmtTime(ts: number): string {
     <RcCard variant="outline" padding="none">
       <div class="flex items-center justify-between border-b border-border px-5 py-4">
         <h2 class="text-sm font-bold tracking-tight">{{ t("overview.recent") }}</h2>
-        <RcButton variant="link" size="xs" @click="router.replace('/admin/logs')">
+        <RcButton variant="link" size="xs" @click="router.push('/admin/logs')">
           {{ t("overview.viewAll") }}
         </RcButton>
       </div>

@@ -7,45 +7,52 @@
 
     <p v-if="!members.length" class="empty-log">{{ t("members.empty") }}</p>
 
-    <ul class="member-list">
-      <li v-for="m in members" :key="m.login.toLowerCase()" class="member-row">
-        <span class="member-login">{{ m.login }}</span>
-        <RcSelect
-          v-if="canEdit"
-          class="filter-select"
-          :model-value="m.role"
-          :options="roleOptions"
-          :disabled="saving"
-          @update:model-value="onRoleChange(m, $event)"
-        />
-        <RcBadge v-else size="xs" class="role-pill" :class="m.role">{{
-          t("roles." + m.role)
-        }}</RcBadge>
+    <ul class="member-grid">
+      <li v-for="m in members" :key="m.login.toLowerCase()" class="member-card">
+        <span class="member-name" :title="m.login">{{ m.login }}</span>
+        <div class="member-role">
+          <RcSelect
+            v-if="canEdit"
+            :model-value="m.role"
+            :options="roleOptions"
+            :disabled="saving"
+            @update:model-value="onRoleChange(m, $event)"
+          />
+          <RcBadge v-else size="xs" class="role-pill" :class="m.role">{{
+            t("roles." + m.role)
+          }}</RcBadge>
+        </div>
         <RcButton
           v-if="canEdit"
           type="button"
-          variant="destructive"
+          variant="ghost"
+          color="error"
           size="icon"
-          class="icon-btn danger"
+          class="h-8 w-8 text-muted hover:text-bad"
           :disabled="saving"
           :title="t('members.remove')"
+          :aria-label="t('members.remove')"
           @click="removeMember(m)"
         >
-          ✕
+          <Trash2 :size="15" />
         </RcButton>
       </li>
     </ul>
 
     <div v-if="canEdit" class="member-add">
-      <RcInput
-        v-model="newLogin"
-        type="text"
-        :placeholder="t('members.addPlaceholder')"
-        class="text-input"
-        @keydown.enter.prevent="addMember"
-      />
-      <RcSelect v-model="newRole" class="filter-select" :options="roleOptions" />
-      <RcButton type="button" size="sm" :disabled="saving" @click="addMember">
+      <div class="member-add-login">
+        <RcInput
+          v-model="newLogin"
+          type="text"
+          size="sm"
+          :placeholder="t('members.addPlaceholder')"
+          @keydown.enter.prevent="addMember"
+        />
+      </div>
+      <div class="member-role">
+        <RcSelect v-model="newRole" :options="roleOptions" />
+      </div>
+      <RcButton type="button" size="sm" class="h-9" :disabled="saving" @click="addMember">
         {{ t("members.addBtn") }}
       </RcButton>
     </div>
@@ -56,8 +63,16 @@
         <span class="lbl-note">{{ t("members.inviteNote") }}</span>
       </h4>
       <div class="invite-create">
-        <RcSelect v-model="inviteRole" class="filter-select" :options="inviteRoleOptions" />
-        <RcButton type="button" size="sm" :disabled="saving || inviting" @click="createInvite">
+        <div class="member-role">
+          <RcSelect v-model="inviteRole" :options="inviteRoleOptions" />
+        </div>
+        <RcButton
+          type="button"
+          size="sm"
+          class="h-9"
+          :disabled="saving || inviting"
+          @click="createInvite"
+        >
           {{ t("members.createInvite") }}
         </RcButton>
       </div>
@@ -68,17 +83,14 @@
             t("roles." + inv.role)
           }}</RcBadge>
           <span class="invite-exp">{{ fmtExp(inv.expiresAt) }}</span>
-          <RcButton type="button" variant="ghost" size="sm" @click="copyInvite(inv)">
-            {{ copied === inv.token ? t("members.copied") : t("members.copyLink") }}
-          </RcButton>
-          <RcButton
-            type="button"
-            variant="destructive"
-            size="sm"
-            class="icon-btn danger"
-            @click="revoke(inv)"
-            >{{ t("members.revoke") }}</RcButton
-          >
+          <div class="invite-actions">
+            <RcButton type="button" variant="ghost" size="sm" @click="copyInvite(inv)">
+              {{ copied === inv.token ? t("members.copied") : t("members.copyLink") }}
+            </RcButton>
+            <RcButton type="button" variant="ghost" color="error" size="sm" @click="revoke(inv)">{{
+              t("members.revoke")
+            }}</RcButton>
+          </div>
         </li>
       </ul>
       <p v-else class="empty-log">{{ t("members.noInvites") }}</p>
@@ -90,10 +102,12 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { Trash2 } from "lucide-vue-next";
 import type { Group, GroupInvite, GroupMember, GroupRole } from "~/types";
 import { useInvitesApi } from "~/composables/useInvites";
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
 
 const props = defineProps<{ group: Group; canEdit: boolean; saving: boolean }>();
 const emit = defineEmits<{ (e: "save", group: Group): void }>();
@@ -156,11 +170,17 @@ function addMember(): void {
   emitSave();
 }
 
-function removeMember(m: GroupMember): void {
+async function removeMember(m: GroupMember): Promise<void> {
+  formError.value = "";
   if (m.role === "owner" && ownerCount() === 1) {
     formError.value = t("members.errLastOwner");
     return;
   }
+  const confirmed = await confirm({
+    title: t("confirm.removeMember", { name: m.login }),
+    confirmText: t("members.remove"),
+  });
+  if (!confirmed) return;
   members.value = members.value.filter((x) => x !== m);
   emitSave();
 }
@@ -202,6 +222,11 @@ async function copyInvite(inv: GroupInvite): Promise<void> {
 }
 
 async function revoke(inv: GroupInvite): Promise<void> {
+  const confirmed = await confirm({
+    title: t("confirm.revokeInvite"),
+    confirmText: t("members.revoke"),
+  });
+  if (!confirmed) return;
   try {
     await invitesApi.revoke(inv.token);
     invites.value = invites.value.filter((i) => i.token !== inv.token);

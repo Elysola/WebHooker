@@ -21,17 +21,17 @@
         </button>
       </nav>
       <div class="console-sidebar-footer">
-        <a href="/admin/logout"><LogOut :size="16" />{{ t("app.signOut") }}</a>
+        <button type="button" @click="signOut"><LogOut :size="16" />{{ t("app.signOut") }}</button>
       </div>
     </aside>
 
     <div class="console-main">
       <header class="console-topbar">
-        <div>
+        <div class="console-heading">
           <p class="console-kicker">WebHooker / {{ activeNav }}</p>
-          <h1>{{ pageTitle }}</h1>
+          <h1 :title="pageTitle">{{ pageTitle }}</h1>
         </div>
-        <div class="console-actions">
+        <div class="console-utilities">
           <RcBadge
             v-if="!needLogin && loadingAny"
             variant="soft"
@@ -41,27 +41,32 @@
           >
             {{ t("status.loading") }}
           </RcBadge>
-          <RcButton v-if="view === 'overview'" variant="ghost" size="sm" @click="refreshOverview"
-            ><RefreshCw :size="15" />{{ t("metrics.refresh") }}</RcButton
-          >
           <ThemeToggle />
           <RcButton variant="ghost" size="sm" @click="toggle"
-            ><Languages :size="15" />{{ t("app.langToggle") }}</RcButton
+            ><Languages :size="15" class="console-lang-icon" />{{ t("app.langToggle") }}</RcButton
           >
+          <!-- The sidebar (with its sign-out) is hidden on narrow screens. -->
           <RcButton
-            v-if="!needLogin && selectedGroup && canEditRoutes(selectedGroup.id)"
-            @click="openNew"
-            ><Plus :size="16" />{{ t("app.newRoute") }}</RcButton
+            v-if="!needLogin"
+            variant="ghost"
+            size="sm"
+            class="console-topbar-signout"
+            :title="t('app.signOut')"
+            :aria-label="t('app.signOut')"
+            @click="signOut"
+            ><LogOut :size="15" /><span class="console-signout-label">{{
+              t("app.signOut")
+            }}</span></RcButton
           >
-          <RcButton
-            v-if="!needLogin && !selectedGroup && view === 'groups' && isSuper"
-            @click="openNewGroup"
-            ><Plus :size="16" />{{ t("app.newGroup") }}</RcButton
+        </div>
+        <div v-if="view === 'overview'" class="console-actions">
+          <RcButton variant="ghost" size="sm" @click="refreshOverview"
+            ><RefreshCw :size="15" />{{ t("metrics.refresh") }}</RcButton
           >
         </div>
       </header>
 
-      <div class="console-mobile-nav">
+      <div class="console-mobile-nav" @click="onMobileNavClick">
         <RcTabs
           :model-value="activeNav"
           :items="mobileNav"
@@ -86,53 +91,125 @@
             v-if="view === 'overview'"
             :key="refreshKey"
             :groups="groups"
-            :logs="logs"
-            :metrics="metrics"
+            :logs="overviewLogs"
+            :metrics="overviewMetrics"
             :groups-loading="groupsLoading"
-            :logs-loading="logsLoading"
-            :metrics-loading="metricsLoading"
+            :logs-loading="overviewLogsLoading"
+            :metrics-loading="overviewMetricsLoading"
           />
 
           <template v-else-if="selectedGroup">
-            <section class="console-context-bar">
-              <div>
-                <RcButton variant="ghost" size="sm" @click="exitGroup"
-                  ><ArrowLeft :size="15" />{{ t("group.back") }}</RcButton
+            <section
+              ref="groupBarEl"
+              class="console-context-bar console-group-bar"
+              :class="`labels-${barLabels}`"
+            >
+              <div class="console-group-heading">
+                <h2 ref="groupNameEl" :title="selectedGroup.name">{{ selectedGroup.name }}</h2>
+                <RcBadge
+                  :variant="groupRoutesLoading ? 'soft' : 'success'"
+                  size="sm"
+                  dot
+                  class="shrink-0"
+                  :title="t('group.routeCount', { count: groupRoutes.length })"
+                  >{{ groupRoutes.length }}</RcBadge
                 >
-                <p>{{ t("group.routesIn", { name: selectedGroup.name }) }}</p>
               </div>
-              <RcBadge :variant="groupRoutesLoading ? 'soft' : 'success'" size="sm" dot>{{
-                groupRoutes.length
-              }}</RcBadge>
+              <div class="console-context-actions">
+                <template v-if="reordering">
+                  <RcButton
+                    variant="outline"
+                    color="neutral"
+                    size="sm"
+                    :disabled="savingOrder"
+                    @click="cancelReorder"
+                    >{{ t("routes.reorderCancel") }}</RcButton
+                  >
+                  <RcButton
+                    size="sm"
+                    :loading="savingOrder"
+                    :disabled="!orderChanged || reorderBusy"
+                    @click="saveOrder"
+                    ><Check :size="15" />{{ t("routes.reorderSave") }}</RcButton
+                  >
+                </template>
+                <template v-else>
+                  <RcButton
+                    v-if="canReorder"
+                    variant="outline"
+                    color="neutral"
+                    size="sm"
+                    class="console-reorder-btn"
+                    :disabled="routesBusy"
+                    :title="t('routes.reorder')"
+                    :aria-label="t('routes.reorder')"
+                    @click="startReorder"
+                    ><ArrowUpDown :size="15" /><span class="console-reorder-label">{{
+                      t("routes.reorder")
+                    }}</span></RcButton
+                  >
+                  <RcButton
+                    v-if="canCreateRoute"
+                    size="sm"
+                    class="console-new-route-btn"
+                    :disabled="!routesWritable"
+                    :title="t('app.newRoute')"
+                    :aria-label="t('app.newRoute')"
+                    @click="openNew"
+                    ><Plus :size="15" /><span class="console-new-route-label">{{
+                      t("app.newRoute")
+                    }}</span></RcButton
+                  >
+                </template>
+              </div>
+              <p v-if="reordering" class="console-reorder-hint">{{ t("routes.reorderHint") }}</p>
+              <!-- Unseen full-width copies of the buttons: how much room their labels need. -->
+              <div
+                v-if="!reordering"
+                ref="barSizerEl"
+                class="console-bar-sizer"
+                aria-hidden="true"
+                inert
+              >
+                <RcButton
+                  v-if="canReorder"
+                  data-size="reorder"
+                  variant="outline"
+                  color="neutral"
+                  size="sm"
+                  tabindex="-1"
+                  ><ArrowUpDown :size="15" />{{ t("routes.reorder") }}</RcButton
+                >
+                <RcButton v-if="canCreateRoute" data-size="new" size="sm" tabindex="-1"
+                  ><Plus :size="15" />{{ t("app.newRoute") }}</RcButton
+                >
+              </div>
             </section>
 
             <p v-if="groupRoutesError" class="err">{{ groupRoutesError }}</p>
 
-            <section class="space-y-2.5">
-              <RouteCard
-                v-for="(r, i) in groupRoutes"
-                :key="r.id"
-                :route="r"
-                :at-first="i === 0"
-                :at-last="i === groupRoutes.length - 1"
-                :readonly="!canEditRoutes(selectedGroup.id)"
-                :style="{ animationDelay: i * 45 + 'ms' }"
-                @toggle="onToggle"
-                @edit="openEdit"
-                @delete="onDelete"
-                @move="onMove"
-              />
-            </section>
+            <RouteList
+              :routes="reordering ? orderDraft : groupRoutes"
+              :reordering="reordering"
+              :locked="routesLocked"
+              :readonly="!canEditRoutes(selectedGroup.id)"
+              @update:routes="orderDraft = $event"
+              @update:busy="reorderBusy = $event"
+              @toggle="onToggle"
+              @edit="openEdit"
+              @delete="onDelete"
+            />
 
-            <section v-if="!groupRoutesLoading && !groupRoutes.length" class="console-empty">
+            <section v-if="groupRoutesReady && !groupRoutes.length" class="console-empty">
               <RcEmptyState :title="t('routes.emptyGroup')">
-                <RcButton v-if="canEditRoutes(selectedGroup.id)" @click="openNew"
+                <RcButton v-if="canCreateRoute" :disabled="!routesWritable" @click="openNew"
                   ><Plus :size="16" />{{ t("routes.createFirst") }}</RcButton
                 >
               </RcEmptyState>
             </section>
 
             <MembersPanel
+              :key="selectedGroup.id"
               :group="selectedGroup"
               :can-edit="canEditGroup(selectedGroup.id)"
               :saving="savingGroup"
@@ -141,20 +218,45 @@
 
             <WebhookPanel
               v-if="canEditGroup(selectedGroup.id)"
+              :key="selectedGroup.id"
               :group-id="selectedGroup.id"
               :can-edit="canEditGroup(selectedGroup.id)"
             />
           </template>
 
+          <section v-else-if="groupMissing" class="console-empty">
+            <RcEmptyState :title="t('group.notFound')">
+              <NuxtLink to="/admin/groups"
+                ><RcButton variant="outline" color="neutral">{{
+                  t("group.allGroups")
+                }}</RcButton></NuxtLink
+              >
+            </RcEmptyState>
+          </section>
+
+          <section v-else-if="routeGroupId" class="console-context-bar">
+            <p v-if="groupsError" class="err">{{ groupsError }}</p>
+            <RcBadge v-else variant="soft" size="sm" dot>{{ t("status.loading") }}</RcBadge>
+          </section>
+
           <template v-else-if="view === 'groups'">
             <section class="console-context-bar">
-              <div>
-                <p>{{ t("kpi.groups") }}</p>
+              <div class="console-count">
+                <p>{{ t("tab.groups") }}</p>
                 <strong>{{ groups.length }}</strong>
               </div>
-              <RcBadge v-if="groupsLoading" variant="soft" size="sm" dot>{{
-                t("status.loading")
-              }}</RcBadge>
+              <div class="console-context-actions">
+                <RcBadge v-if="groupsLoading" variant="soft" size="sm" dot>{{
+                  t("status.loading")
+                }}</RcBadge>
+                <RcButton
+                  v-if="canCreateGroup"
+                  size="sm"
+                  :disabled="savingGroup"
+                  @click="openNewGroup"
+                  ><Plus :size="15" />{{ t("app.newGroup") }}</RcButton
+                >
+              </div>
             </section>
 
             <p v-if="groupsError" class="err">{{ groupsError }}</p>
@@ -170,18 +272,18 @@
                 :style="{ animationDelay: i * 35 + 'ms' }"
                 @click="enterGroup(g)"
               >
-                <div class="p-4 space-y-3">
+                <div class="flex flex-1 flex-col gap-3 p-4">
                   <div class="flex items-start justify-between gap-2.5">
                     <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2">
-                        <span class="truncate text-[15px] font-semibold text-text">{{
-                          g.name || t("route.untitled")
-                        }}</span>
-                        <RcBadge v-if="roleOf(g.id)" variant="brand" size="xs">
-                          {{ t("role.badge", { role: t("roles." + roleOf(g.id)) }) }}
-                        </RcBadge>
+                      <div
+                        class="line-clamp-2 text-[15px] leading-snug font-semibold text-text [overflow-wrap:anywhere]"
+                        :title="g.name || t('route.untitled')"
+                      >
+                        {{ g.name || t("route.untitled") }}
                       </div>
-                      <div class="mt-0.5 font-mono text-[11px] text-faint truncate">{{ g.id }}</div>
+                      <div class="mt-0.5 font-mono text-[11px] text-faint truncate" :title="g.id">
+                        {{ g.id }}
+                      </div>
                     </div>
                     <div
                       v-if="canEditGroup(g.id)"
@@ -192,6 +294,7 @@
                         variant="ghost"
                         size="icon"
                         class="h-7 w-7 text-muted hover:text-text"
+                        :disabled="savingGroup"
                         :title="t('groupEditor.editTitle')"
                         @click="openEditGroup(g)"
                       >
@@ -202,6 +305,9 @@
                         color="error"
                         size="icon"
                         class="h-7 w-7 text-muted hover:text-bad"
+                        :disabled="savingGroup"
+                        :title="t('groups.delete')"
+                        :aria-label="t('groups.delete')"
                         @click="onDeleteGroup(g)"
                       >
                         <Trash2 :size="13.5" />
@@ -210,6 +316,15 @@
                   </div>
 
                   <div class="space-y-1.5 text-xs">
+                    <div
+                      v-if="roleOf(g.id)"
+                      class="flex items-center justify-between text-[11.5px]"
+                    >
+                      <span class="text-faint font-semibold">{{ t("groups.myRole") }}</span>
+                      <RcBadge variant="brand" size="xs" class="whitespace-nowrap">
+                        {{ t("roles." + roleOf(g.id)) }}
+                      </RcBadge>
+                    </div>
                     <div class="flex items-center justify-between text-[11.5px]">
                       <span class="text-faint font-semibold">{{ t("groups.members") }}</span>
                       <span class="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-text">
@@ -230,15 +345,17 @@
                   </div>
 
                   <div
-                    class="flex items-center justify-between pt-2 border-t border-border/70 text-xs"
+                    class="mt-auto flex items-center justify-between pt-2 border-t border-border/70 text-xs"
                   >
                     <span class="text-faint text-[11px]">{{ t("overview.routes") }}</span>
-                    <span
+                    <NuxtLink
+                      :to="groupPath(g.id)"
                       class="inline-flex items-center gap-1 font-semibold text-accent hover:underline"
+                      @click.stop
                     >
                       {{ t("groups.open") }}
                       <ArrowRight :size="12" />
-                    </span>
+                    </NuxtLink>
                   </div>
                 </div>
               </RcCard>
@@ -246,7 +363,7 @@
 
             <section v-if="!groupsLoading && !groups.length" class="console-empty">
               <RcEmptyState :title="t('groups.empty')"
-                ><RcButton v-if="isSuper" @click="openNewGroup"
+                ><RcButton v-if="isSuper" :disabled="savingGroup" @click="openNewGroup"
                   ><Plus :size="16" />{{ t("groups.createFirst") }}</RcButton
                 ></RcEmptyState
               >
@@ -298,10 +415,12 @@
       </main>
     </div>
 
+    <!-- One editor for every group (not keyed): its fragment store, scoped
+         per group, keeps a pending fragment write's lock across navigation. -->
     <RouteEditor
       :open="editorOpen"
       :route="editing"
-      :saving="saving"
+      :saving="routesLocked"
       :group-id="selectedGroup?.id ?? null"
       @close="editorOpen = false"
       @save="onSave"
@@ -315,14 +434,17 @@
       @close="groupEditorOpen = false"
       @save="onSaveGroup"
     />
+
+    <ConfirmDialog />
   </div>
 </template>
 
 <script setup lang="ts">
 import {
   Activity,
-  ArrowLeft,
   ArrowRight,
+  ArrowUpDown,
+  Check,
   ClipboardList,
   Gauge,
   Languages,
@@ -337,38 +459,30 @@ import {
   Trash2,
 } from "lucide-vue-next";
 import type { Group, Route } from "~/types";
+import type { AdminView } from "~/utils/admin-path";
+import { adminGroupPath, parseAdminPath } from "~/utils/admin-path";
 import { useAuditApi } from "~/composables/useAudit";
 import WebhookPanel from "~/components/WebhookPanel.vue";
 import AdminHome from "~/components/AdminHome.vue";
 
-const { t, toggle } = useI18n();
+const { t, toggle, locale } = useI18n();
 const { push } = useToasts();
+const { confirm, settle: dismissConfirm } = useConfirm();
 const route = useRoute();
 const router = useRouter();
 
 /**
  * The console view mirrors the URL path so navigation is deep-linkable:
- * /admin (overview) · /admin/groups · /admin/logs · /admin/audit · /admin/metrics.
- * Unknown slugs 404.
+ * /admin (overview) · /admin/groups · /admin/groups/{groupId} (a group's
+ * routes) · /admin/logs · /admin/audit · /admin/metrics. The page validates
+ * the path, so unknown slugs 404 before the console renders.
  */
-type View = "overview" | "groups" | "logs" | "audit" | "metrics";
-const view = computed<View | null>(() => {
-  const seg = route.path.split("/").filter(Boolean)[1];
-  if (!seg) return "overview";
-  if (
-    seg === "overview" ||
-    seg === "groups" ||
-    seg === "logs" ||
-    seg === "audit" ||
-    seg === "metrics"
-  )
-    return seg;
-  return null;
-});
-
-if (view.value === null) {
-  throw createError({ statusCode: 404, statusMessage: "Page not found", fatal: false });
-}
+type View = AdminView;
+const adminPath = computed(() => parseAdminPath(route.params.slug));
+const view = computed<View | null>(() => adminPath.value?.view ?? null);
+/** Group whose routes page the URL opens (/admin/groups/{groupId}). */
+const routeGroupId = computed(() => adminPath.value?.groupId ?? null);
+const groupPath = adminGroupPath;
 
 const nav = computed(() => [
   { id: "overview" as View, label: t("tab.overview"), path: "/admin" },
@@ -397,6 +511,7 @@ const activeNav = computed<View>(() => view.value ?? "overview");
 
 const pageTitle = computed(() => {
   if (selectedGroup.value) return t("group.routesIn", { name: selectedGroup.value.name });
+  if (routeGroupId.value) return t("tab.groups");
   switch (view.value) {
     case "overview":
       return t("tab.overview");
@@ -418,11 +533,22 @@ const loadingAny = computed(
     groupsLoading.value ||
     logsLoading.value ||
     metricsLoading.value ||
+    overviewLogsLoading.value ||
+    overviewMetricsLoading.value ||
     groupRoutesLoading.value ||
     auditLoading.value,
 );
 
 const { logs, loading: logsLoading, error: logsError, load: loadLogs } = useSendLogs();
+// Overview shows every group's latest sends and totals, apart from the Send
+// Logs and Stats pages and their group filters (the console stays mounted, so
+// shared state would carry one page's filter into the other).
+const { logs: overviewLogs, loading: overviewLogsLoading, load: loadOverviewLogs } = useSendLogs();
+const {
+  metrics: overviewMetrics,
+  loading: overviewMetricsLoading,
+  load: loadOverviewMetrics,
+} = useMetrics();
 const {
   entries: auditEntries,
   loading: auditLoading,
@@ -438,6 +564,7 @@ const {
   canEditGroup,
   canEditRoutes,
   loading: groupsLoading,
+  loaded: groupsLoaded,
   needLogin,
   error: groupsError,
   load: loadGroups,
@@ -449,6 +576,8 @@ const {
   loading: groupRoutesLoading,
   error: groupRoutesError,
   load: loadGroupRoutes,
+  clear: clearGroupRoutes,
+  ready: groupRoutesReady,
   save: saveGroupRoutes,
 } = useGroupRoutesApi();
 
@@ -456,11 +585,140 @@ const editorOpen = ref(false);
 const editing = ref<Route | null>(null);
 const saving = ref(false);
 const forbidden = ref(false);
-const selectedGroup = ref<Group | null>(null);
+/** The group the URL opens, once the group list knows it. */
+const selectedGroup = computed<Group | null>(() =>
+  routeGroupId.value ? (groups.value.find((g) => g.id === routeGroupId.value) ?? null) : null,
+);
+/** The URL names a group the signed-in user cannot see (or that does not exist). */
+const groupMissing = computed(
+  () => !!routeGroupId.value && groupsLoaded.value && !groupsError.value && !selectedGroup.value,
+);
 
 const groupEditorOpen = ref(false);
 const editingGroup = ref<Group | null>(null);
 const savingGroup = ref(false);
+
+/** Reorder mode: the draft order the user drags until it is saved or cancelled. */
+const reordering = ref(false);
+const orderDraft = ref<Route[]>([]);
+const savingOrder = ref(false);
+/** Route saves (toggle/delete) still in flight; reordering waits for them. */
+const routeMutations = ref(0);
+const routesBusy = computed(
+  () => groupRoutesLoading.value || saving.value || routeMutations.value > 0,
+);
+/** Route controls wait while the routes load or a write is in flight. */
+const routesLocked = computed(() => routesBusy.value || savingOrder.value);
+/**
+ * A route write may start: the group's routes are loaded (a save replaces the
+ * whole list, so writing from a still-empty or failed list would wipe it)
+ * and no other load or write is running.
+ */
+const routesWritable = computed(() => groupRoutesReady.value && !routesLocked.value);
+
+/** Refuse a route write the page is not ready for; true when it may go ahead. */
+function canWriteRoutes(): boolean {
+  if (routesWritable.value) return true;
+  push(t("toast.routesNotReady"), "bad");
+  return false;
+}
+
+// Bumped whenever an editor opens: a save may only close the editor it was
+// made from, never one opened since (on another page, for another route).
+let routeEditorSession = 0;
+let groupEditorSession = 0;
+/** A dropped card is still settling; its new position is not in the draft yet. */
+const reorderBusy = ref(false);
+const orderChanged = computed(
+  () =>
+    orderDraft.value.length !== groupRoutes.value.length ||
+    orderDraft.value.some((r, i) => r.id !== groupRoutes.value[i]?.id),
+);
+
+const canCreateRoute = computed(
+  () =>
+    !needLogin.value &&
+    !!selectedGroup.value &&
+    canEditRoutes(selectedGroup.value.id) &&
+    !reordering.value,
+);
+const canReorder = computed(
+  () =>
+    !!selectedGroup.value && canEditRoutes(selectedGroup.value.id) && groupRoutes.value.length > 1,
+);
+/**
+ * Labels of the group bar's buttons, given up so the group name stays whole:
+ * first Reorder turns into an icon, then New route; only with both on icons
+ * may a long name be cut short.
+ */
+const barLabels = ref<"all" | "new" | "none">("all");
+const groupBarEl = ref<HTMLElement | null>(null);
+const groupNameEl = ref<HTMLElement | null>(null);
+const barSizerEl = ref<HTMLElement | null>(null);
+
+function fitBarLabels(): void {
+  const bar = groupBarEl.value;
+  const name = groupNameEl.value;
+  const sizer = barSizerEl.value;
+  if (!bar || !name || !sizer) return;
+  // Fractional widths throughout: a rounded pixel decides whether a name fits.
+  const px = (value: string): number => parseFloat(value) || 0;
+  const gap = (el: Element | null): number => (el ? px(getComputedStyle(el).columnGap) : 0);
+  const width = (el: Element | Range | null | undefined): number =>
+    el?.getBoundingClientRect().width ?? 0;
+  const barStyle = getComputedStyle(bar);
+  const room =
+    width(bar) -
+    px(barStyle.paddingLeft) -
+    px(barStyle.paddingRight) -
+    px(barStyle.borderLeftWidth) -
+    px(barStyle.borderRightWidth) -
+    1;
+  // The whole name (its text, not the ellipsis box) plus the count after it.
+  const text = document.createRange();
+  text.selectNodeContents(name);
+  const count = name.nextElementSibling;
+  const heading = width(text) + (count ? gap(name.parentElement) + width(count) : 0);
+  const full = (key: string): number => width(sizer.querySelector(`[data-size="${key}"]`));
+  // An icon-only button is a 2rem square (see `.labels-*` below).
+  const icon = 2 * px(getComputedStyle(document.documentElement).fontSize);
+  const reorder = full("reorder");
+  const create = full("new");
+  const actionsGap = gap(bar.querySelector(".console-context-actions"));
+  const fits = (widths: number[]): boolean => {
+    const shown = widths.filter((w) => w > 0);
+    const actions = shown.reduce((sum, w) => sum + w, 0) + (shown.length - 1) * actionsGap;
+    return heading + px(barStyle.columnGap) + actions <= room;
+  };
+  if (fits([reorder, create])) barLabels.value = "all";
+  else if (fits([reorder && icon, create])) barLabels.value = "new";
+  else barLabels.value = "none";
+}
+
+let barObserver: ResizeObserver | undefined;
+watch(groupBarEl, (bar) => {
+  barObserver?.disconnect();
+  if (!bar || typeof ResizeObserver === "undefined") return;
+  barObserver = new ResizeObserver(() => fitBarLabels());
+  barObserver.observe(bar);
+});
+watch(
+  () => [
+    selectedGroup.value?.name,
+    groupRoutes.value.length,
+    locale.value,
+    canReorder.value,
+    canCreateRoute.value,
+    reordering.value,
+  ],
+  () => nextTick(fitBarLabels),
+);
+onMounted(() => document.fonts?.ready.then(fitBarLabels));
+onBeforeUnmount(() => barObserver?.disconnect());
+
+const canCreateGroup = computed(
+  () => !needLogin.value && !routeGroupId.value && view.value === "groups" && isSuper.value,
+);
 
 const logFilterGroup = ref("");
 const auditFilterGroup = ref("");
@@ -477,56 +735,233 @@ onMounted(() => {
     if (params.get("install") === "ok") push(t("install.ok"));
   }
   loadGroups();
-  loadLogs(50, logFilterGroup.value || undefined);
-  loadMetrics();
 });
 
-// Tab switches are client-side navigations (no remount), so load the audit
-// log whenever the audit view becomes active — including direct deep links.
+// The console stays mounted across its pages (the admin page has a fixed
+// key), so a page refreshes what it shows whenever it becomes active —
+// direct deep links included.
 watch(
   view,
-  (v) => {
+  (v, previous) => {
+    if (v === "overview") {
+      loadOverviewLogs(50);
+      loadOverviewMetrics();
+    }
+    if (v === "logs") loadLogs(50, logFilterGroup.value || undefined);
     if (v === "audit") loadAudit(50, auditFilterGroup.value || undefined);
     if (v === "metrics") loadMetrics(metricsFilterGroup.value || undefined);
+    // The first load runs on mount; later visits pick up changes made since.
+    if (previous && (v === "overview" || v === "groups")) loadGroups();
   },
   { immediate: true },
 );
 
+// Every page is a history entry: the browser's (or device's) back button
+// returns from a group's routes to the group list.
 function switchView(next: View): void {
   const path = next === "overview" ? "/admin" : `/admin/${next}`;
-  if (route.path !== path) router.replace(path);
+  if (route.path !== path) router.push(path);
 }
+
+/**
+ * The active mobile tab emits no change, so a tap on "Groups" while a group's
+ * routes are open leads back to the list here (the sidebar link does so itself).
+ */
+function onMobileNavClick(event: MouseEvent): void {
+  const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
+  if (tab?.getAttribute("aria-selected") === "true" && routeGroupId.value) switchView("groups");
+}
+
+/** Work on the current page that leaving it would throw away. */
+function hasUnsavedWork(): boolean {
+  return editorOpen.value || groupEditorOpen.value || (reordering.value && orderChanged.value);
+}
+
+/** Counts navigations reaching the guards; a newer one supersedes the question. */
+let navigationAttempt = 0;
+
+/** Ask before a navigation throws work away; the page resets once it happened. */
+async function confirmLeave(): Promise<boolean> {
+  if (!hasUnsavedWork()) return true;
+  const attempt = navigationAttempt;
+  const leave = await confirm({
+    title: t("confirm.leaveUnsaved"),
+    description: t("confirm.leaveUnsavedDesc"),
+    confirmText: t("confirm.leave"),
+    kind: "leave",
+  });
+  // Superseded while asking: let the router cancel this navigation itself.
+  // Refusing it would read as "stay" and step the browser history back again,
+  // on top of the newer navigation that already moved it.
+  if (attempt !== navigationAttempt) return true;
+  // Staying after Back/Forward: the browser has already moved. The router
+  // steps back its own move; earlier, superseded moves are undone after it.
+  if (!leave && historyPosition() !== shownPosition) {
+    window.addEventListener("popstate", restoreShownEntry, { once: true });
+  }
+  return leave;
+}
+
+/** vue-router's position (in `history.state`) of the current history entry. */
+function historyPosition(): number | null {
+  const position = (window.history.state as { position?: unknown } | null)?.position;
+  return typeof position === "number" ? position : null;
+}
+
+/** History position of the page on screen, as of the last completed navigation. */
+let shownPosition = typeof window === "undefined" ? null : historyPosition();
+const stopTrackingPosition = router.afterEach((_to, _from, failure) => {
+  if (!failure) shownPosition = historyPosition();
+});
+onBeforeUnmount(stopTrackingPosition);
+
+/** Move the browser back to the entry on screen without starting a navigation. */
+function restoreShownEntry(): void {
+  const position = historyPosition();
+  if (position !== null && shownPosition !== null && position !== shownPosition) {
+    router.options.history.go(shownPosition - position, false);
+  }
+}
+
+async function signOut(): Promise<void> {
+  const confirmed = await confirm({
+    title: t("confirm.signOut"),
+    confirmText: t("app.signOut"),
+    kind: "signOut",
+  });
+  // A full page load: the server clears the session and redirects.
+  if (confirmed) window.location.assign("/admin/logout");
+}
+
+// A newer navigation supersedes one still waiting for an answer: that
+// question (like any other confirmation of this page) is cancelled first.
+function supersedePending(): void {
+  navigationAttempt++;
+  dismissConfirm(false);
+}
+
+onBeforeRouteUpdate((to, from) => {
+  supersedePending();
+  return to.path === from.path || confirmLeave();
+});
+onBeforeRouteLeave(() => {
+  supersedePending();
+  return confirmLeave();
+});
+
+/** Bumped by every page change: work begun on one page must not act on the next. */
+let pageVisit = 0;
+
+// Only a navigation that actually happened resets the page it left: its
+// editors, a reorder draft and any confirmation still open.
+watch(
+  () => route.path,
+  () => {
+    pageVisit++;
+    dismissConfirm(false);
+    editorOpen.value = false;
+    groupEditorOpen.value = false;
+    cancelReorder();
+  },
+);
 
 async function refreshOverview(): Promise<void> {
   refreshKey.value++;
-  await Promise.all([loadGroups(), loadLogs(50, logFilterGroup.value || undefined), loadMetrics()]);
+  await Promise.all([loadGroups(), loadOverviewLogs(50), loadOverviewMetrics()]);
   push(t("overview.refreshed"));
 }
 
 function enterGroup(group: Group): void {
-  selectedGroup.value = group;
-  groupRoutes.value = [];
-  loadGroupRoutes(group.id);
+  router.push(groupPath(group.id));
 }
 
-function exitGroup(): void {
-  selectedGroup.value = null;
-  loadGroups();
+// The URL decides which group's routes are shown — on a deep link, a click
+// on a group, or the browser's back/forward buttons alike.
+watch(
+  routeGroupId,
+  (id, previous) => {
+    cancelReorder();
+    if (id) loadGroupRoutes(id);
+    else clearGroupRoutes();
+    // Back on the list: members or sources may have changed meanwhile.
+    if (!id && previous && view.value === "groups") loadGroups();
+  },
+  { immediate: true },
+);
+
+function startReorder(): void {
+  if (!routesWritable.value) return;
+  orderDraft.value = [...groupRoutes.value];
+  reorderBusy.value = false;
+  reordering.value = true;
 }
+
+function cancelReorder(): void {
+  reordering.value = false;
+  reorderBusy.value = false;
+  orderDraft.value = [];
+}
+
+async function saveOrder(): Promise<void> {
+  const group = selectedGroup.value;
+  if (!group || !orderChanged.value || reorderBusy.value || savingOrder.value) return;
+  if (!groupRoutesReady.value || routesBusy.value) {
+    push(t("toast.routesNotReady"), "bad");
+    return;
+  }
+  savingOrder.value = true;
+  try {
+    // Persist the latest copy of each route in the draft order, so the save
+    // can never resurrect or roll back a route changed since reordering began.
+    const latest = new Map(groupRoutes.value.map((r) => [r.id, r]));
+    const ordered = orderDraft.value.flatMap((r) => latest.get(r.id) ?? []);
+    const added = groupRoutes.value.filter((r) => !orderDraft.value.some((d) => d.id === r.id));
+    await saveGroupRoutes(group.id, [...ordered, ...added]);
+    cancelReorder();
+    push(t("toast.orderSaved"));
+  } catch (err) {
+    push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
+  } finally {
+    savingOrder.value = false;
+  }
+}
+
+function onReorderKey(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || savingOrder.value || event.defaultPrevented) return;
+  // Escape closes an open dialog or list first (e.g. a member-removal
+  // confirmation); it must not also throw away the unsaved order.
+  const target = event.target instanceof Element ? event.target : null;
+  if (
+    target?.closest('[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]') ||
+    document.querySelector('[role="dialog"], [role="alertdialog"]')
+  )
+    return;
+  cancelReorder();
+}
+
+watch(reordering, (on) => {
+  if (on) window.addEventListener("keydown", onReorderKey);
+  else window.removeEventListener("keydown", onReorderKey);
+});
+
+onBeforeUnmount(() => window.removeEventListener("keydown", onReorderKey));
 
 function openNew(): void {
+  routeEditorSession++;
   editing.value = null;
   editorOpen.value = true;
 }
 
 function openEdit(route: Route): void {
+  routeEditorSession++;
   editing.value = route;
   editorOpen.value = true;
 }
 
 async function onSave(route: Route): Promise<void> {
   const group = selectedGroup.value;
-  if (!group) return;
+  if (!group || !canWriteRoutes()) return;
+  const session = routeEditorSession;
   saving.value = true;
   try {
     let next: Route[];
@@ -540,7 +975,7 @@ async function onSave(route: Route): Promise<void> {
       next = [...groupRoutes.value, route];
     }
     await saveGroupRoutes(group.id, next);
-    editorOpen.value = false;
+    if (session === routeEditorSession) editorOpen.value = false;
     push(t("toast.routesSaved"));
   } catch (err) {
     push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
@@ -549,25 +984,10 @@ async function onSave(route: Route): Promise<void> {
   }
 }
 
-async function onMove(route: Route, dir: -1 | 1): Promise<void> {
-  const group = selectedGroup.value;
-  if (!group) return;
-  const i = groupRoutes.value.findIndex((r) => r.id === route.id);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= groupRoutes.value.length) return;
-  const next = [...groupRoutes.value];
-  [next[i], next[j]] = [next[j]!, next[i]!];
-  try {
-    await saveGroupRoutes(group.id, next);
-  } catch (err) {
-    push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
-    loadGroupRoutes(group.id);
-  }
-}
-
 async function onToggle(route: Route): Promise<void> {
   const group = selectedGroup.value;
-  if (!group) return;
+  if (!group || !canWriteRoutes()) return;
+  routeMutations.value++;
   try {
     await saveGroupRoutes(
       group.id,
@@ -575,14 +995,21 @@ async function onToggle(route: Route): Promise<void> {
     );
   } catch (err) {
     push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
-    loadGroupRoutes(group.id);
+    // Restore the switch from the server, unless another group is open by now.
+    if (routeGroupId.value === group.id) loadGroupRoutes(group.id);
+  } finally {
+    routeMutations.value--;
   }
 }
 
 async function onDelete(route: Route): Promise<void> {
   const group = selectedGroup.value;
-  if (!group) return;
-  if (!window.confirm(t("confirm.deleteRoute", { name: route.name || route.id }))) return;
+  if (!group || !canWriteRoutes()) return;
+  if (!(await confirm({ title: t("confirm.deleteRoute", { name: route.name || route.id }) })))
+    return;
+  // The page may have changed while the question was open.
+  if (selectedGroup.value?.id !== group.id || !canWriteRoutes()) return;
+  routeMutations.value++;
   try {
     await saveGroupRoutes(
       group.id,
@@ -591,37 +1018,51 @@ async function onDelete(route: Route): Promise<void> {
     push(t("toast.routeDeleted"));
   } catch (err) {
     push(t("toast.deleteFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
+  } finally {
+    routeMutations.value--;
   }
 }
 
 function openNewGroup(): void {
+  groupEditorSession++;
   editingGroup.value = null;
   groupEditorOpen.value = true;
 }
 
 function openEditGroup(group: Group): void {
+  groupEditorSession++;
   editingGroup.value = group;
   groupEditorOpen.value = true;
 }
 
+/**
+ * Group writes replace the whole group list, so they run one at a time, each
+ * built from the list the previous one saved; true when one may start.
+ */
+function canWriteGroups(): boolean {
+  if (!savingGroup.value) return true;
+  push(t("toast.groupsBusy"), "bad");
+  return false;
+}
+
 async function onSaveGroupFromPanel(group: Group): Promise<void> {
+  if (!canWriteGroups()) return;
   savingGroup.value = true;
   try {
     const next = groups.value.map((g) => (g.id === group.id ? group : g));
     await saveGroups(next);
-    selectedGroup.value = group;
     push(t("toast.groupSaved"));
   } catch (err) {
     push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
-    if (selectedGroup.value) {
-      loadGroups();
-    }
+    loadGroups();
   } finally {
     savingGroup.value = false;
   }
 }
 
 async function onSaveGroup(group: Group): Promise<void> {
+  if (!canWriteGroups()) return;
+  const session = groupEditorSession;
   savingGroup.value = true;
   try {
     const editing = editingGroup.value;
@@ -631,7 +1072,8 @@ async function onSaveGroup(group: Group): Promise<void> {
         // Id changed: rename first so routes/webhook secret/invites follow,
         // then persist the remaining edits under the new id.
         await groupsRename(editing.id, group.id);
-        next = [...groups.value.filter((g) => g.id !== editing.id), group];
+        // A list loaded meanwhile may already hold the new id as well.
+        next = [...groups.value.filter((g) => g.id !== editing.id && g.id !== group.id), group];
       } else {
         next = groups.value.map((g) => (g.id === editing.id ? group : g));
       }
@@ -643,7 +1085,7 @@ async function onSaveGroup(group: Group): Promise<void> {
       next = [...groups.value, group];
     }
     await saveGroups(next);
-    groupEditorOpen.value = false;
+    if (session === groupEditorSession) groupEditorOpen.value = false;
     push(t("toast.groupSaved"));
     await loadGroups();
   } catch (err) {
@@ -654,6 +1096,8 @@ async function onSaveGroup(group: Group): Promise<void> {
 }
 
 async function onDeleteGroup(group: Group): Promise<void> {
+  if (!canWriteGroups()) return;
+  const visit = pageVisit;
   // Fetch the real route count for this group instead of relying on the
   // routes of whichever group happens to be open in the detail view.
   let used = 0;
@@ -665,13 +1109,21 @@ async function onDeleteGroup(group: Group): Promise<void> {
   } catch {
     // Count is best-effort; proceed without the warning.
   }
-  const warn = used ? t("confirm.deleteGroupWarn", { n: used }) : "";
-  if (!window.confirm(t("confirm.deleteGroup", { name: group.name || group.id }) + warn)) return;
+  // The list was left while the count loaded: never ask on another page.
+  if (visit !== pageVisit) return;
+  const confirmed = await confirm({
+    title: t("confirm.deleteGroup", { name: group.name || group.id }),
+    description: used ? t("confirm.deleteGroupWarn", { n: used }).trim() : undefined,
+  });
+  if (!confirmed || visit !== pageVisit || !canWriteGroups()) return;
+  savingGroup.value = true;
   try {
     await saveGroups(groups.value.filter((g) => g.id !== group.id));
     push(t("toast.groupDeleted"));
   } catch (err) {
     push(t("toast.deleteFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
+  } finally {
+    savingGroup.value = false;
   }
 }
 </script>
@@ -679,7 +1131,9 @@ async function onDeleteGroup(group: Group): Promise<void> {
 <style scoped>
 .console-shell {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  /* The sidebar narrows with the window (264px from ~1260px down to 208px),
+     wide enough for every label in either language. */
+  grid-template-columns: clamp(208px, 21vw, 264px) minmax(0, 1fr);
   min-height: 100vh;
   background: rgb(var(--wh-bg));
   color: rgb(var(--wh-text));
@@ -764,16 +1218,20 @@ async function onDeleteGroup(group: Group): Promise<void> {
   padding: 0.9rem 0.55rem 0.25rem;
   border-top: 1px solid rgb(var(--wh-border));
 }
-.console-sidebar-footer a {
+.console-sidebar-footer button {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: rgb(var(--wh-muted));
+  font: inherit;
   font-size: 0.8rem;
   font-weight: 700;
-  text-decoration: none;
+  cursor: pointer;
 }
-.console-sidebar-footer a:hover {
+.console-sidebar-footer button:hover {
   color: rgb(var(--wh-bad));
 }
 .console-main {
@@ -786,21 +1244,36 @@ async function onDeleteGroup(group: Group): Promise<void> {
   display: flex;
   min-height: 76px;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  gap: 0.45rem;
   border-bottom: 1px solid rgb(var(--wh-border));
   background: color-mix(in srgb, rgb(var(--wh-bg)) 87%, transparent);
   padding: 0.8rem clamp(1rem, 3vw, 2.5rem);
   backdrop-filter: blur(18px);
 }
+.console-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 0.55rem;
+}
 .console-topbar h1 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   margin: 0.1rem 0 0;
   font-size: 1.15rem;
   letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
 }
 .console-kicker {
   margin: 0;
 }
+.console-heading .console-kicker {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-utilities,
 .console-actions {
   display: flex;
   align-items: center;
@@ -809,6 +1282,9 @@ async function onDeleteGroup(group: Group): Promise<void> {
 }
 .console-status {
   white-space: nowrap;
+}
+.console-topbar-signout {
+  display: none;
 }
 .console-mobile-nav {
   display: none;
@@ -842,9 +1318,10 @@ async function onDeleteGroup(group: Group): Promise<void> {
 }
 .console-context-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem 1rem;
   margin-bottom: 1rem;
   padding: 0.8rem 1rem;
   border: 1px solid rgb(var(--wh-border));
@@ -866,11 +1343,97 @@ async function onDeleteGroup(group: Group): Promise<void> {
   font-size: 1.25rem;
   letter-spacing: -0.04em;
 }
+/* A heading with its count: one size, aligned on the text baseline. */
+.console-context-bar > .console-count {
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.console-count p {
+  color: rgb(var(--wh-text));
+  font-size: 1rem;
+  font-weight: 600;
+}
+.console-count strong {
+  color: rgb(var(--wh-muted));
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.console-context-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+/* A group's routes: its name with the route count right after it. The name
+   gives way (ellipsis) so the count and the actions keep their line. */
+.console-group-bar {
+  position: relative;
+}
+.console-context-bar > .console-group-heading {
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 0.5rem;
+}
+.console-group-heading h2 {
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-group-bar .console-context-actions {
+  flex: none;
+}
+/* Labels given up for the name (see fitBarLabels): an icon-only button
+   turns into a 2rem square. */
+.labels-new .console-reorder-label,
+.labels-none .console-reorder-label,
+.labels-none .console-new-route-label {
+  display: none;
+}
+.labels-new .console-reorder-btn,
+.labels-none .console-reorder-btn,
+.labels-none .console-new-route-btn {
+  width: 2rem;
+  padding-inline: 0;
+}
+/* Measures the buttons with their labels without showing or overflowing. */
+.console-bar-sizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: 100%;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+.console-bar-sizer > * {
+  flex: none;
+}
+.console-context-bar .console-reorder-hint {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
 .console-empty {
   padding: 4rem 1rem;
 }
 .console-group-card {
   cursor: pointer;
+}
+/* Cards stretch to their grid row; the footer sits at the bottom so the
+   dividers of one row line up whatever each card lists above them. */
+.console-group-card,
+.console-group-card > :deep(div) {
+  display: flex;
+  flex-direction: column;
+}
+.console-group-card > :deep(div) {
+  flex: 1 1 auto;
 }
 .console-open {
   display: inline-flex;
@@ -887,32 +1450,85 @@ async function onDeleteGroup(group: Group): Promise<void> {
   .console-sidebar {
     display: none;
   }
+  .console-topbar-signout {
+    display: inline-flex;
+  }
   .console-mobile-nav {
     display: block;
     border-bottom: 1px solid rgb(var(--wh-border));
     padding: 0.5rem 1rem;
     overflow-x: auto;
+    /* Still swipeable, without a scrollbar under the tabs. */
+    scrollbar-width: none;
+  }
+  .console-mobile-nav::-webkit-scrollbar {
+    display: none;
   }
   .console-mobile-nav :deep(.rc-tabs) {
     min-width: max-content;
   }
 }
 @media (max-width: 620px) {
+  /* Title left with theme/language pinned top-right; page actions below, right-aligned. */
   .console-topbar {
-    align-items: flex-start;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.75rem 0.25rem;
+  }
+  .console-heading {
+    padding-right: 0;
+  }
+  .console-utilities {
+    gap: 0.25rem;
   }
   .console-actions {
-    width: 100%;
-    justify-content: flex-start;
+    grid-column: 1 / -1;
+    justify-self: end;
+    max-width: 100%;
     overflow-x: auto;
     padding-bottom: 0.05rem;
   }
-  .console-status {
+  /* Keep the top-right tools compact so the title column stays readable. */
+  .console-status,
+  .console-signout-label,
+  .console-lang-icon {
     display: none;
+  }
+  .console-topbar-signout {
+    width: 2rem;
+    padding-inline: 0;
   }
   .console-content {
     width: min(100% - 1.25rem, 1240px);
+  }
+}
+@media (max-width: 360px) {
+  /* Too narrow to share a row with the tools: the breadcrumb sits beside
+     them and the title takes the full width below. */
+  .console-topbar {
+    row-gap: 0.3rem;
+  }
+  .console-heading {
+    display: contents;
+  }
+  .console-kicker {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+  }
+  .console-topbar h1 {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 0;
+  }
+  .console-utilities {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .console-actions {
+    grid-row: 3;
+    margin-top: 0.45rem;
   }
 }
 </style>
