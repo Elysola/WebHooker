@@ -27,11 +27,11 @@
 
     <div class="console-main">
       <header class="console-topbar">
-        <div>
+        <div class="console-heading">
           <p class="console-kicker">WebHooker / {{ activeNav }}</p>
-          <h1>{{ pageTitle }}</h1>
+          <h1 :title="pageTitle">{{ pageTitle }}</h1>
         </div>
-        <div class="console-actions">
+        <div class="console-utilities">
           <RcBadge
             v-if="!needLogin && loadingAny"
             variant="soft"
@@ -41,12 +41,14 @@
           >
             {{ t("status.loading") }}
           </RcBadge>
-          <RcButton v-if="view === 'overview'" variant="ghost" size="sm" @click="refreshOverview"
-            ><RefreshCw :size="15" />{{ t("metrics.refresh") }}</RcButton
-          >
           <ThemeToggle />
           <RcButton variant="ghost" size="sm" @click="toggle"
-            ><Languages :size="15" />{{ t("app.langToggle") }}</RcButton
+            ><Languages :size="15" class="console-lang-icon" />{{ t("app.langToggle") }}</RcButton
+          >
+        </div>
+        <div class="console-actions">
+          <RcButton v-if="view === 'overview'" variant="ghost" size="sm" @click="refreshOverview"
+            ><RefreshCw :size="15" />{{ t("metrics.refresh") }}</RcButton
           >
           <RcButton
             v-if="!needLogin && selectedGroup && canEditRoutes(selectedGroup.id) && !reordering"
@@ -870,21 +872,36 @@ async function onDeleteGroup(group: Group): Promise<void> {
   display: flex;
   min-height: 76px;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  gap: 0.45rem;
   border-bottom: 1px solid rgb(var(--wh-border));
   background: color-mix(in srgb, rgb(var(--wh-bg)) 87%, transparent);
   padding: 0.8rem clamp(1rem, 3vw, 2.5rem);
   backdrop-filter: blur(18px);
 }
+.console-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 0.55rem;
+}
 .console-topbar h1 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   margin: 0.1rem 0 0;
   font-size: 1.15rem;
   letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
 }
 .console-kicker {
   margin: 0;
 }
+.console-heading .console-kicker {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-utilities,
 .console-actions {
   display: flex;
   align-items: center;
@@ -994,17 +1011,29 @@ async function onDeleteGroup(group: Group): Promise<void> {
   }
 }
 @media (max-width: 620px) {
+  /* Title left with theme/language pinned top-right; page actions below, right-aligned. */
   .console-topbar {
-    align-items: flex-start;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.75rem 0.25rem;
+  }
+  .console-heading {
+    padding-right: 0;
+  }
+  .console-utilities {
+    gap: 0.25rem;
   }
   .console-actions {
-    width: 100%;
-    justify-content: flex-start;
+    grid-column: 1 / -1;
+    justify-self: end;
+    max-width: 100%;
     overflow-x: auto;
     padding-bottom: 0.05rem;
   }
-  .console-status {
+  /* Keep the top-right tools compact so the title column stays readable. */
+  .console-status,
+  .console-lang-icon {
     display: none;
   }
   .console-content {
