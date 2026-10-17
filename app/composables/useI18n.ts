@@ -446,6 +446,7 @@ const en: Dict = {
   "confirm.leaveUnsaved": "Leave this page?",
   "confirm.leaveUnsavedDesc": "Your unsaved changes will be lost.",
   "confirm.leave": "Leave",
+  "confirm.signOut": "Sign out of the console?",
 };
 
 const zh: Dict = {
@@ -883,6 +884,7 @@ const zh: Dict = {
   "confirm.leaveUnsaved": "确定离开此页面吗？",
   "confirm.leaveUnsavedDesc": "尚未保存的修改将会丢失。",
   "confirm.leave": "离开",
+  "confirm.signOut": "确定退出登录吗？",
 };
 
 const messages: Record<Locale, Dict> = { en, zh };

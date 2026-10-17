@@ -6,7 +6,7 @@ export interface ConfirmOptions {
   /** Label of the destructive button (defaults to "Delete"). */
   confirmText?: string;
   /** What the action does, shown as the dialog icon (defaults to "delete"). */
-  kind?: "delete" | "leave";
+  kind?: "delete" | "leave" | "signOut";
 }
 
 interface ConfirmRequest extends ConfirmOptions {

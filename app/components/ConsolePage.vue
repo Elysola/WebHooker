@@ -21,7 +21,7 @@
         </button>
       </nav>
       <div class="console-sidebar-footer">
-        <a href="/admin/logout"><LogOut :size="16" />{{ t("app.signOut") }}</a>
+        <button type="button" @click="signOut"><LogOut :size="16" />{{ t("app.signOut") }}</button>
       </div>
     </aside>
 
@@ -44,6 +44,19 @@
           <ThemeToggle />
           <RcButton variant="ghost" size="sm" @click="toggle"
             ><Languages :size="15" class="console-lang-icon" />{{ t("app.langToggle") }}</RcButton
+          >
+          <!-- The sidebar (with its sign-out) is hidden on narrow screens. -->
+          <RcButton
+            v-if="!needLogin"
+            variant="ghost"
+            size="sm"
+            class="console-topbar-signout"
+            :title="t('app.signOut')"
+            :aria-label="t('app.signOut')"
+            @click="signOut"
+            ><LogOut :size="15" /><span class="console-signout-label">{{
+              t("app.signOut")
+            }}</span></RcButton
           >
         </div>
         <div class="console-actions">
@@ -645,6 +658,16 @@ function restoreShownEntry(): void {
   }
 }
 
+async function signOut(): Promise<void> {
+  const confirmed = await confirm({
+    title: t("confirm.signOut"),
+    confirmText: t("app.signOut"),
+    kind: "signOut",
+  });
+  // A full page load: the server clears the session and redirects.
+  if (confirmed) window.location.assign("/admin/logout");
+}
+
 // A newer navigation supersedes one still waiting for an answer: that
 // question (like any other confirmation of this page) is cancelled first.
 function supersedePending(): void {
@@ -986,16 +1009,20 @@ async function onDeleteGroup(group: Group): Promise<void> {
   padding: 0.9rem 0.55rem 0.25rem;
   border-top: 1px solid rgb(var(--wh-border));
 }
-.console-sidebar-footer a {
+.console-sidebar-footer button {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: rgb(var(--wh-muted));
+  font: inherit;
   font-size: 0.8rem;
   font-weight: 700;
-  text-decoration: none;
+  cursor: pointer;
 }
-.console-sidebar-footer a:hover {
+.console-sidebar-footer button:hover {
   color: rgb(var(--wh-bad));
 }
 .console-main {
@@ -1046,6 +1073,9 @@ async function onDeleteGroup(group: Group): Promise<void> {
 }
 .console-status {
   white-space: nowrap;
+}
+.console-topbar-signout {
+  display: none;
 }
 .console-mobile-nav {
   display: none;
@@ -1184,6 +1214,9 @@ async function onDeleteGroup(group: Group): Promise<void> {
   .console-sidebar {
     display: none;
   }
+  .console-topbar-signout {
+    display: inline-flex;
+  }
   .console-mobile-nav {
     display: block;
     border-bottom: 1px solid rgb(var(--wh-border));
@@ -1229,8 +1262,13 @@ async function onDeleteGroup(group: Group): Promise<void> {
   }
   /* Keep the top-right tools compact so the title column stays readable. */
   .console-status,
+  .console-signout-label,
   .console-lang-icon {
     display: none;
+  }
+  .console-topbar-signout {
+    width: 2rem;
+    padding-inline: 0;
   }
   .console-content {
     width: min(100% - 1.25rem, 1240px);

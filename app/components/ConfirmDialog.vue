@@ -28,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-import { Trash2, TriangleAlert } from "lucide-vue-next";
+import { LogOut, Trash2, TriangleAlert } from "lucide-vue-next";
 import {
   AlertDialogCancel,
   AlertDialogContent,
@@ -46,6 +46,7 @@ const { pending: request, settle, attachHost } = useConfirm();
 const KIND_ICONS = {
   delete: Trash2,
   leave: TriangleAlert,
+  signOut: LogOut,
 } satisfies Record<NonNullable<ConfirmOptions["kind"]>, typeof Trash2>;
 
 // Keep the last request on screen while the close animation plays.
