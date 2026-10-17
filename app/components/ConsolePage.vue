@@ -200,18 +200,18 @@
                 :style="{ animationDelay: i * 35 + 'ms' }"
                 @click="enterGroup(g)"
               >
-                <div class="p-4 space-y-3">
+                <div class="flex flex-1 flex-col gap-3 p-4">
                   <div class="flex items-start justify-between gap-2.5">
                     <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2">
-                        <span class="truncate text-[15px] font-semibold text-text">{{
-                          g.name || t("route.untitled")
-                        }}</span>
-                        <RcBadge v-if="roleOf(g.id)" variant="brand" size="xs">
-                          {{ t("role.badge", { role: t("roles." + roleOf(g.id)) }) }}
-                        </RcBadge>
+                      <div
+                        class="line-clamp-2 text-[15px] leading-snug font-semibold text-text [overflow-wrap:anywhere]"
+                        :title="g.name || t('route.untitled')"
+                      >
+                        {{ g.name || t("route.untitled") }}
                       </div>
-                      <div class="mt-0.5 font-mono text-[11px] text-faint truncate">{{ g.id }}</div>
+                      <div class="mt-0.5 font-mono text-[11px] text-faint truncate" :title="g.id">
+                        {{ g.id }}
+                      </div>
                     </div>
                     <div
                       v-if="canEditGroup(g.id)"
@@ -232,6 +232,8 @@
                         color="error"
                         size="icon"
                         class="h-7 w-7 text-muted hover:text-bad"
+                        :title="t('groups.delete')"
+                        :aria-label="t('groups.delete')"
                         @click="onDeleteGroup(g)"
                       >
                         <Trash2 :size="13.5" />
@@ -240,6 +242,15 @@
                   </div>
 
                   <div class="space-y-1.5 text-xs">
+                    <div
+                      v-if="roleOf(g.id)"
+                      class="flex items-center justify-between text-[11.5px]"
+                    >
+                      <span class="text-faint font-semibold">{{ t("groups.myRole") }}</span>
+                      <RcBadge variant="brand" size="xs" class="whitespace-nowrap">
+                        {{ t("roles." + roleOf(g.id)) }}
+                      </RcBadge>
+                    </div>
                     <div class="flex items-center justify-between text-[11.5px]">
                       <span class="text-faint font-semibold">{{ t("groups.members") }}</span>
                       <span class="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-text">
@@ -260,7 +271,7 @@
                   </div>
 
                   <div
-                    class="flex items-center justify-between pt-2 border-t border-border/70 text-xs"
+                    class="mt-auto flex items-center justify-between pt-2 border-t border-border/70 text-xs"
                   >
                     <span class="text-faint text-[11px]">{{ t("overview.routes") }}</span>
                     <span
@@ -1003,6 +1014,16 @@ async function onDeleteGroup(group: Group): Promise<void> {
 }
 .console-group-card {
   cursor: pointer;
+}
+/* Cards stretch to their grid row; the footer sits at the bottom so the
+   dividers of one row line up whatever each card lists above them. */
+.console-group-card,
+.console-group-card > :deep(div) {
+  display: flex;
+  flex-direction: column;
+}
+.console-group-card > :deep(div) {
+  flex: 1 1 auto;
 }
 .console-open {
   display: inline-flex;
