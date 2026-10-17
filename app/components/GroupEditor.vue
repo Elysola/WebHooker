@@ -343,8 +343,11 @@ function close(): void {
   emit("close");
 }
 
+// A click on the backdrop must not discard what has been typed so far.
+const { isBackdropClose } = useBackdropGuard(() => props.open, ".editor-dialog");
+
 function onOpenChange(open: boolean): void {
-  if (!open) close();
+  if (!open && !isBackdropClose()) close();
 }
 
 function save(): void {

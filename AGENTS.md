@@ -41,7 +41,8 @@ app/                     # Vue 3 UI (Nuxt app dir)
 │                        # AST builder + FilterCombobox searchable inputs), GroupEditor, MembersPanel, WebhookPanel,
 │                        # ConfirmDialog (app-wide destructive-action confirm), SendLogs, AuditLog, MetricsPanel,
 │                        # AppToasts, LegalLayout
-├── composables/         # useI18n, useToasts, useConfirm (promise-based confirm), useGroups, useGroupRoutes, useFilterNode (AST helpers), useFragments, useLogs,
+├── composables/         # useI18n, useToasts, useConfirm (promise-based confirm), useBackdropGuard (editor dialogs ignore
+│                        # backdrop clicks), useGroups, useGroupRoutes, useFilterNode (AST helpers), useFragments, useLogs,
 │                        # useAudit, useInvites, useWebhook
 ├── types.ts             # shared client types (Route, Group, Filter, ...)
 └── utils/              # legal.ts (terms/privacy HTML bodies, zh/en), format.ts,
