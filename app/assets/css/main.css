@@ -1275,11 +1275,12 @@
   }
 
   .log-filters {
-    @apply flex items-center gap-1.5;
+    @apply flex min-w-0 items-center gap-1.5;
   }
 
+  /* Never squeezed into a column of single characters on narrow screens. */
   .filter-label {
-    @apply text-[11px] font-bold uppercase tracking-wider text-muted;
+    @apply shrink-0 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider text-muted;
   }
 
   .filter-select {
@@ -1332,6 +1333,11 @@
 
   .log-meta b {
     @apply mr-1 font-semibold tracking-wider text-faint;
+  }
+
+  /* Long ids (channel/thread, repo) wrap instead of widening the page. */
+  .log-meta span {
+    @apply min-w-0 [overflow-wrap:anywhere];
   }
 
   .log-meta code {
