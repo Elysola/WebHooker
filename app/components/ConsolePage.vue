@@ -55,11 +55,6 @@
             @click="openNew"
             ><Plus :size="16" />{{ t("app.newRoute") }}</RcButton
           >
-          <RcButton
-            v-if="!needLogin && !selectedGroup && view === 'groups' && isSuper"
-            @click="openNewGroup"
-            ><Plus :size="16" />{{ t("app.newGroup") }}</RcButton
-          >
         </div>
       </header>
 
@@ -175,13 +170,21 @@
 
           <template v-else-if="view === 'groups'">
             <section class="console-context-bar">
-              <div>
-                <p>{{ t("kpi.groups") }}</p>
+              <div class="console-count">
+                <p>{{ t("tab.groups") }}</p>
                 <strong>{{ groups.length }}</strong>
               </div>
-              <RcBadge v-if="groupsLoading" variant="soft" size="sm" dot>{{
-                t("status.loading")
-              }}</RcBadge>
+              <div class="console-context-actions">
+                <RcBadge v-if="groupsLoading" variant="soft" size="sm" dot>{{
+                  t("status.loading")
+                }}</RcBadge>
+                <RcButton
+                  v-if="!needLogin && !selectedGroup && isSuper"
+                  size="sm"
+                  @click="openNewGroup"
+                  ><Plus :size="15" />{{ t("app.newGroup") }}</RcButton
+                >
+              </div>
             </section>
 
             <p v-if="groupsError" class="err">{{ groupsError }}</p>
@@ -967,6 +970,22 @@ async function onDeleteGroup(group: Group): Promise<void> {
 .console-context-bar strong {
   font-size: 1.25rem;
   letter-spacing: -0.04em;
+}
+/* A heading with its count: one size, aligned on the text baseline. */
+.console-context-bar > .console-count {
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.console-count p {
+  color: rgb(var(--wh-text));
+  font-size: 1rem;
+  font-weight: 600;
+}
+.console-count strong {
+  color: rgb(var(--wh-muted));
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 .console-context-actions {
   display: flex;
