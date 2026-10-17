@@ -4,7 +4,9 @@
       <AlertDialogOverlay class="confirm-overlay" />
       <AlertDialogContent class="confirm-dialog">
         <div class="confirm-body">
-          <span class="confirm-icon" aria-hidden="true"><Trash2 :size="18" /></span>
+          <span class="confirm-icon" aria-hidden="true"
+            ><component :is="KIND_ICONS[shown?.kind ?? 'delete']" :size="18"
+          /></span>
           <div class="min-w-0 space-y-1.5">
             <AlertDialogTitle class="confirm-title">{{ shown?.title }}</AlertDialogTitle>
             <AlertDialogDescription v-if="shown?.description" class="confirm-description">
@@ -26,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-import { Trash2 } from "lucide-vue-next";
+import { Trash2, TriangleAlert } from "lucide-vue-next";
 import {
   AlertDialogCancel,
   AlertDialogContent,
@@ -40,6 +42,11 @@ import type { ConfirmOptions } from "~/composables/useConfirm";
 
 const { t } = useI18n();
 const { pending: request, settle, attachHost } = useConfirm();
+
+const KIND_ICONS = {
+  delete: Trash2,
+  leave: TriangleAlert,
+} satisfies Record<NonNullable<ConfirmOptions["kind"]>, typeof Trash2>;
 
 // Keep the last request on screen while the close animation plays.
 const shown = ref<ConfirmOptions | null>(null);

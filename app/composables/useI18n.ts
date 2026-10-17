@@ -443,6 +443,9 @@ const en: Dict = {
   "confirm.disableWebhook": "Disable this group's webhook endpoint?",
   "confirm.disableWebhookDetail": "The secret is deleted; senders still using it will be rejected.",
   "confirm.removeForgeSource": 'Remove host "{name}"?',
+  "confirm.leaveUnsaved": "Leave this page?",
+  "confirm.leaveUnsavedDesc": "Your unsaved changes will be lost.",
+  "confirm.leave": "Leave",
 };
 
 const zh: Dict = {
@@ -877,6 +880,9 @@ const zh: Dict = {
   "confirm.disableWebhook": "确定停用该分组的 webhook 入口吗？",
   "confirm.disableWebhookDetail": "secret 将被删除，仍在使用它的发送方会被拒绝。",
   "confirm.removeForgeSource": "确定删除来源主机“{name}”吗？",
+  "confirm.leaveUnsaved": "确定离开此页面吗？",
+  "confirm.leaveUnsavedDesc": "尚未保存的修改将会丢失。",
+  "confirm.leave": "离开",
 };
 
 const messages: Record<Locale, Dict> = { en, zh };

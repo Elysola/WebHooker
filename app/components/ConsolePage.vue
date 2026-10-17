@@ -413,7 +413,7 @@ import AdminHome from "~/components/AdminHome.vue";
 
 const { t, toggle } = useI18n();
 const { push } = useToasts();
-const { confirm } = useConfirm();
+const { confirm, settle: dismissConfirm } = useConfirm();
 const route = useRoute();
 const router = useRouter();
 
@@ -593,6 +593,89 @@ function onMobileNavClick(event: MouseEvent): void {
   const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
   if (tab?.getAttribute("aria-selected") === "true" && routeGroupId.value) switchView("groups");
 }
+
+/** Work on the current page that leaving it would throw away. */
+function hasUnsavedWork(): boolean {
+  return editorOpen.value || groupEditorOpen.value || (reordering.value && orderChanged.value);
+}
+
+/** Counts navigations reaching the guards; a newer one supersedes the question. */
+let navigationAttempt = 0;
+
+/** Ask before a navigation throws work away; the page resets once it happened. */
+async function confirmLeave(): Promise<boolean> {
+  if (!hasUnsavedWork()) return true;
+  const attempt = navigationAttempt;
+  const leave = await confirm({
+    title: t("confirm.leaveUnsaved"),
+    description: t("confirm.leaveUnsavedDesc"),
+    confirmText: t("confirm.leave"),
+    kind: "leave",
+  });
+  // Superseded while asking: let the router cancel this navigation itself.
+  // Refusing it would read as "stay" and step the browser history back again,
+  // on top of the newer navigation that already moved it.
+  if (attempt !== navigationAttempt) return true;
+  // Staying after Back/Forward: the browser has already moved. The router
+  // steps back its own move; earlier, superseded moves are undone after it.
+  if (!leave && historyPosition() !== shownPosition) {
+    window.addEventListener("popstate", restoreShownEntry, { once: true });
+  }
+  return leave;
+}
+
+/** vue-router's position (in `history.state`) of the current history entry. */
+function historyPosition(): number | null {
+  const position = (window.history.state as { position?: unknown } | null)?.position;
+  return typeof position === "number" ? position : null;
+}
+
+/** History position of the page on screen, as of the last completed navigation. */
+let shownPosition = typeof window === "undefined" ? null : historyPosition();
+const stopTrackingPosition = router.afterEach((_to, _from, failure) => {
+  if (!failure) shownPosition = historyPosition();
+});
+onBeforeUnmount(stopTrackingPosition);
+
+/** Move the browser back to the entry on screen without starting a navigation. */
+function restoreShownEntry(): void {
+  const position = historyPosition();
+  if (position !== null && shownPosition !== null && position !== shownPosition) {
+    router.options.history.go(shownPosition - position, false);
+  }
+}
+
+// A newer navigation supersedes one still waiting for an answer: that
+// question (like any other confirmation of this page) is cancelled first.
+function supersedePending(): void {
+  navigationAttempt++;
+  dismissConfirm(false);
+}
+
+onBeforeRouteUpdate((to, from) => {
+  supersedePending();
+  return to.path === from.path || confirmLeave();
+});
+onBeforeRouteLeave(() => {
+  supersedePending();
+  return confirmLeave();
+});
+
+/** Bumped by every page change: work begun on one page must not act on the next. */
+let pageVisit = 0;
+
+// Only a navigation that actually happened resets the page it left: its
+// editors, a reorder draft and any confirmation still open.
+watch(
+  () => route.path,
+  () => {
+    pageVisit++;
+    dismissConfirm(false);
+    editorOpen.value = false;
+    groupEditorOpen.value = false;
+    cancelReorder();
+  },
+);
 
 async function refreshOverview(): Promise<void> {
   refreshKey.value++;
