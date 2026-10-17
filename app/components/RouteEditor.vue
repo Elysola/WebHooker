@@ -75,7 +75,14 @@ provide(
 );
 const eventSuggestions = computed(() => eventOptions(locale.value));
 
-const { fragments, load: loadFragments, save: saveFragments } = useFragmentsApi();
+const {
+  fragments,
+  readyFor: fragmentsReadyFor,
+  load: loadFragments,
+  save: saveFragments,
+} = useFragmentsApi();
+/** This group's fragments are loaded and no fragment write is running. */
+const fragmentsWritable = computed(() => !!props.groupId && fragmentsReadyFor(props.groupId));
 const fragmentName = ref("");
 const fragmentError = ref("");
 
@@ -266,6 +273,13 @@ function onOpenChange(open: boolean): void {
   if (!open && !isBackdropClose()) close();
 }
 
+/**
+ * Bumped whenever the editor opens or closes. The console keeps one editor
+ * for every group, so an async result (a test run, a fragment write) only
+ * lands in the session that started it.
+ */
+let session = 0;
+
 async function runTest(): Promise<void> {
   testError.value = "";
   testResult.value = null;
@@ -290,19 +304,21 @@ async function runTest(): Promise<void> {
     testError.value = t("routeEditor.errAddFilter");
     return;
   }
+  const mine = session;
   testing.value = true;
   try {
-    testResult.value = await apiFetch<{ matched: boolean; explanation: string }>(
+    const result = await apiFetch<{ matched: boolean; explanation: string }>(
       "/admin/api/test-match",
       {
         method: "POST",
         body: JSON.stringify({ node, event: testEvent.value.trim() || undefined, payload }),
       },
     );
+    if (mine === session) testResult.value = result;
   } catch (err) {
-    testError.value = err instanceof Error ? err.message : String(err);
+    if (mine === session) testError.value = err instanceof Error ? err.message : String(err);
   } finally {
-    testing.value = false;
+    if (mine === session) testing.value = false;
   }
 }
 
@@ -332,6 +348,11 @@ async function saveAsFragment(): Promise<void> {
     return;
   }
   if (!props.groupId) return;
+  // A save replaces the group's whole list: never from one not loaded yet.
+  if (!fragmentsReadyFor(props.groupId)) {
+    fragmentError.value = t("routeEditor.fragmentsNotReady");
+    return;
+  }
   const problem = filterTreeError();
   if (problem) {
     fragmentError.value = problem;
@@ -342,35 +363,44 @@ async function saveAsFragment(): Promise<void> {
     fragmentError.value = t("routeEditor.errAddFilter");
     return;
   }
+  const groupId = props.groupId;
   const id = `frag-${Math.random().toString(36).slice(2, 10)}`;
   const next: NamedFragment[] = [
     ...fragments.value.filter((f) => f.id !== id),
-    { id, groupId: props.groupId, name, node },
+    { id, groupId, name, node },
   ];
+  const mine = session;
   try {
-    await saveFragments(props.groupId, next);
-    fragmentName.value = "";
+    await saveFragments(groupId, next);
+    if (mine === session) fragmentName.value = "";
   } catch (err) {
-    fragmentError.value = err instanceof Error ? err.message : String(err);
+    if (mine === session) fragmentError.value = err instanceof Error ? err.message : String(err);
   }
 }
 
 async function deleteFragment(frag: NamedFragment): Promise<void> {
   const groupId = props.groupId;
   if (!groupId) return;
+  const mine = session;
   if (!(await confirm({ title: t("confirm.deleteFragment", { name: frag.name }) }))) return;
+  if (mine !== session) return;
   fragmentError.value = "";
+  if (props.groupId !== groupId || !fragmentsReadyFor(groupId)) {
+    fragmentError.value = t("routeEditor.fragmentsNotReady");
+    return;
+  }
   const next = fragments.value.filter((f) => f.id !== frag.id);
   try {
     await saveFragments(groupId, next);
   } catch (err) {
-    fragmentError.value = err instanceof Error ? err.message : String(err);
+    if (mine === session) fragmentError.value = err instanceof Error ? err.message : String(err);
   }
 }
 
 watch(
   () => props.open,
   (open) => {
+    session++;
     if (!open) return;
     const r = props.route;
     form.id = r?.id ?? "";
@@ -404,6 +434,7 @@ watch(
     testEvent.value = "";
     testResult.value = null;
     testError.value = "";
+    testing.value = false;
     fragmentName.value = "";
     fragmentError.value = "";
     if (props.groupId) loadFragments(props.groupId);
@@ -562,6 +593,7 @@ watch(
               color="error"
               size="icon"
               class="h-8 w-8 text-muted hover:text-bad"
+              :disabled="!fragmentsWritable"
               :title="t('routeEditor.fragmentsDelete')"
               :aria-label="t('routeEditor.fragmentsDelete')"
               @click="deleteFragment(frag)"
@@ -581,6 +613,7 @@ watch(
             type="button"
             variant="ghost"
             class="shrink-0 whitespace-nowrap"
+            :disabled="!fragmentsWritable"
             @click="saveAsFragment"
           >
             {{ t("routeEditor.fragmentsSave") }}

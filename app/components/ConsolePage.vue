@@ -410,6 +410,8 @@
       </main>
     </div>
 
+    <!-- One editor for every group (not keyed): its fragment store, scoped
+         per group, keeps a pending fragment write's lock across navigation. -->
     <RouteEditor
       :open="editorOpen"
       :route="editing"
@@ -616,6 +618,10 @@ function canWriteRoutes(): boolean {
   push(t("toast.routesNotReady"), "bad");
   return false;
 }
+// Bumped whenever an editor opens: a save may only close the editor it was
+// made from, never one opened since (on another page, for another route).
+let routeEditorSession = 0;
+let groupEditorSession = 0;
 /** A dropped card is still settling; its new position is not in the draft yet. */
 const reorderBusy = ref(false);
 const orderChanged = computed(
@@ -934,11 +940,13 @@ watch(reordering, (on) => {
 onBeforeUnmount(() => window.removeEventListener("keydown", onReorderKey));
 
 function openNew(): void {
+  routeEditorSession++;
   editing.value = null;
   editorOpen.value = true;
 }
 
 function openEdit(route: Route): void {
+  routeEditorSession++;
   editing.value = route;
   editorOpen.value = true;
 }
@@ -946,6 +954,7 @@ function openEdit(route: Route): void {
 async function onSave(route: Route): Promise<void> {
   const group = selectedGroup.value;
   if (!group || !canWriteRoutes()) return;
+  const session = routeEditorSession;
   saving.value = true;
   try {
     let next: Route[];
@@ -959,7 +968,7 @@ async function onSave(route: Route): Promise<void> {
       next = [...groupRoutes.value, route];
     }
     await saveGroupRoutes(group.id, next);
-    editorOpen.value = false;
+    if (session === routeEditorSession) editorOpen.value = false;
     push(t("toast.routesSaved"));
   } catch (err) {
     push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
@@ -1008,11 +1017,13 @@ async function onDelete(route: Route): Promise<void> {
 }
 
 function openNewGroup(): void {
+  groupEditorSession++;
   editingGroup.value = null;
   groupEditorOpen.value = true;
 }
 
 function openEditGroup(group: Group): void {
+  groupEditorSession++;
   editingGroup.value = group;
   groupEditorOpen.value = true;
 }
@@ -1032,6 +1043,7 @@ async function onSaveGroupFromPanel(group: Group): Promise<void> {
 }
 
 async function onSaveGroup(group: Group): Promise<void> {
+  const session = groupEditorSession;
   savingGroup.value = true;
   try {
     const editing = editingGroup.value;
@@ -1053,7 +1065,7 @@ async function onSaveGroup(group: Group): Promise<void> {
       next = [...groups.value, group];
     }
     await saveGroups(next);
-    groupEditorOpen.value = false;
+    if (session === groupEditorSession) groupEditorOpen.value = false;
     push(t("toast.groupSaved"));
     await loadGroups();
   } catch (err) {
