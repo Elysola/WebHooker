@@ -223,7 +223,7 @@ const en: Dict = {
   "routeEditor.enabled": "Route enabled",
   "routeEditor.fallback": "Fallback route",
   "routeEditor.fallbackHint":
-    "Only fires when no other route in this group matched; its filters still apply",
+    "Only fires when no regular (non-fallback) route in this group matched; its filters still apply",
   "routeEditor.stop": "Stop on match",
   "routeEditor.stopHint":
     "When matched, later routes in this group are not evaluated for this event",
@@ -668,7 +668,8 @@ const zh: Dict = {
   "routeEditor.idHint": "唯一，使用 a-z / 0-9 / 短横线",
   "routeEditor.enabled": "启用路由",
   "routeEditor.fallback": "兜底路由",
-  "routeEditor.fallbackHint": "仅当本分组没有其它路由匹配该事件时才发送，其过滤器仍会生效",
+  "routeEditor.fallbackHint":
+    "仅当本分组没有普通（非兜底）路由匹配该事件时才发送，其过滤器仍会生效",
   "routeEditor.stop": "匹配后停止",
   "routeEditor.stopHint": "该路由匹配后，不再评估本分组的后续路由",
   "routeEditor.filters": "过滤器",

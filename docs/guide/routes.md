@@ -43,6 +43,8 @@ Each entry of `targets` is a push destination, so one route can forward to sever
 
 Routes are evaluated in the order the console shows them, group by group. `stop` and `fallback` act within a group: a matching `stop` route skips the later routes of its own group only, and a group's fallback routes stay silent only when one of that group's regular routes matched — one group never silences another. To change it, click **Reorder** on the group page, drag routes by their handle (or focus a handle and press <kbd>↑</kbd> / <kbd>↓</kbd>), then **Save order**. The order is stored per group in D1 (`d1_routes.position`, migration `0012`); a database without that migration keeps loading routes in id order.
 
+**Upgrade note:** If your configuration relied on `stop` in one group preventing routes in another group from running, or on a regular route match in one group suppressing fallback sends in another, review your existing routes when upgrading. These effects now apply only within the same group, so routes in other groups may start sending. Move routes that need to be mutually exclusive into the same group, then check their order and `stop` / `fallback` settings.
+
 ## Discord Role Mentions
 
 Set `discordRoleIds` on a route to ping one or more Discord roles (身份组) whenever that route fires. The mention (`<@&roleId>`) is prepended to the message content of every **Discord** target of the route; Telegram targets ignore this field. Mentions only trigger notifications when the bot has the `Mention Everyone` permission (or the role is marked mentionable), and the bot must be able to see the role.
