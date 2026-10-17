@@ -65,18 +65,20 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
       if (!filters || !targets || (r.discord_role_ids && !discordRoleIds) || (r.ast && !ast)) {
         return [];
       }
-      return [{
-        id: r.id,
-        groupId: r.group_id,
-        name: r.name,
-        enabled: r.enabled === 1,
-        filters,
-        targets,
-        stop: r.stop === 1,
-        fallback: r.fallback === 1,
-        discordRoleIds: discordRoleIds ?? undefined,
-        ast: ast ?? undefined,
-      }];
+      return [
+        {
+          id: r.id,
+          groupId: r.group_id,
+          name: r.name,
+          enabled: r.enabled === 1,
+          filters,
+          targets,
+          stop: r.stop === 1,
+          fallback: r.fallback === 1,
+          discordRoleIds: discordRoleIds ?? undefined,
+          ast: ast ?? undefined,
+        },
+      ];
     });
   }
 
