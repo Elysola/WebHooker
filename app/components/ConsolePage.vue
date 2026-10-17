@@ -1274,4 +1274,32 @@ async function onDeleteGroup(group: Group): Promise<void> {
     width: min(100% - 1.25rem, 1240px);
   }
 }
+@media (max-width: 360px) {
+  /* Too narrow to share a row with the tools: the breadcrumb sits beside
+     them and the title takes the full width below. */
+  .console-topbar {
+    row-gap: 0.3rem;
+  }
+  .console-heading {
+    display: contents;
+  }
+  .console-kicker {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+  }
+  .console-topbar h1 {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 0;
+  }
+  .console-utilities {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .console-actions {
+    grid-row: 3;
+    margin-top: 0.45rem;
+  }
+}
 </style>
