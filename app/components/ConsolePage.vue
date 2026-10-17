@@ -63,11 +63,6 @@
           <RcButton v-if="view === 'overview'" variant="ghost" size="sm" @click="refreshOverview"
             ><RefreshCw :size="15" />{{ t("metrics.refresh") }}</RcButton
           >
-          <RcButton
-            v-if="!needLogin && selectedGroup && canEditRoutes(selectedGroup.id) && !reordering"
-            @click="openNew"
-            ><Plus :size="16" />{{ t("app.newRoute") }}</RcButton
-          >
         </div>
       </header>
 
@@ -104,9 +99,13 @@
           />
 
           <template v-else-if="selectedGroup">
-            <section class="console-context-bar console-group-bar">
+            <section
+              ref="groupBarEl"
+              class="console-context-bar console-group-bar"
+              :class="`labels-${barLabels}`"
+            >
               <div class="console-group-heading">
-                <h2 :title="selectedGroup.name">{{ selectedGroup.name }}</h2>
+                <h2 ref="groupNameEl" :title="selectedGroup.name">{{ selectedGroup.name }}</h2>
                 <RcBadge
                   :variant="groupRoutesLoading ? 'soft' : 'success'"
                   size="sm"
@@ -134,22 +133,56 @@
                     ><Check :size="15" />{{ t("routes.reorderSave") }}</RcButton
                   >
                 </template>
+                <template v-else>
+                  <RcButton
+                    v-if="canReorder"
+                    variant="outline"
+                    color="neutral"
+                    size="sm"
+                    class="console-reorder-btn"
+                    :disabled="groupRoutesLoading || saving"
+                    :title="t('routes.reorder')"
+                    :aria-label="t('routes.reorder')"
+                    @click="startReorder"
+                    ><ArrowUpDown :size="15" /><span class="console-reorder-label">{{
+                      t("routes.reorder")
+                    }}</span></RcButton
+                  >
+                  <RcButton
+                    v-if="canCreateRoute"
+                    size="sm"
+                    class="console-new-route-btn"
+                    :title="t('app.newRoute')"
+                    :aria-label="t('app.newRoute')"
+                    @click="openNew"
+                    ><Plus :size="15" /><span class="console-new-route-label">{{
+                      t("app.newRoute")
+                    }}</span></RcButton
+                  >
+                </template>
+              </div>
+              <p v-if="reordering" class="console-reorder-hint">{{ t("routes.reorderHint") }}</p>
+              <!-- Unseen full-width copies of the buttons: how much room their labels need. -->
+              <div
+                v-if="!reordering"
+                ref="barSizerEl"
+                class="console-bar-sizer"
+                aria-hidden="true"
+                inert
+              >
                 <RcButton
-                  v-else-if="canReorder"
+                  v-if="canReorder"
+                  data-size="reorder"
                   variant="outline"
                   color="neutral"
                   size="sm"
-                  class="console-reorder-btn"
-                  :disabled="groupRoutesLoading || saving"
-                  :title="t('routes.reorder')"
-                  :aria-label="t('routes.reorder')"
-                  @click="startReorder"
-                  ><ArrowUpDown :size="15" /><span class="console-reorder-label">{{
-                    t("routes.reorder")
-                  }}</span></RcButton
+                  tabindex="-1"
+                  ><ArrowUpDown :size="15" />{{ t("routes.reorder") }}</RcButton
+                >
+                <RcButton v-if="canCreateRoute" data-size="new" size="sm" tabindex="-1"
+                  ><Plus :size="15" />{{ t("app.newRoute") }}</RcButton
                 >
               </div>
-              <p v-if="reordering" class="console-reorder-hint">{{ t("routes.reorderHint") }}</p>
             </section>
 
             <p v-if="groupRoutesError" class="err">{{ groupRoutesError }}</p>
@@ -214,7 +247,7 @@
                   t("status.loading")
                 }}</RcBadge>
                 <RcButton
-                  v-if="!needLogin && !selectedGroup && isSuper"
+                  v-if="canCreateGroup"
                   size="sm"
                   @click="openNewGroup"
                   ><Plus :size="15" />{{ t("app.newGroup") }}</RcButton
@@ -424,7 +457,7 @@ import { useAuditApi } from "~/composables/useAudit";
 import WebhookPanel from "~/components/WebhookPanel.vue";
 import AdminHome from "~/components/AdminHome.vue";
 
-const { t, toggle } = useI18n();
+const { t, toggle, locale } = useI18n();
 const { push } = useToasts();
 const { confirm, settle: dismissConfirm } = useConfirm();
 const route = useRoute();
@@ -558,9 +591,90 @@ const orderChanged = computed(
     orderDraft.value.length !== groupRoutes.value.length ||
     orderDraft.value.some((r, i) => r.id !== groupRoutes.value[i]?.id),
 );
+const canCreateRoute = computed(
+  () =>
+    !needLogin.value &&
+    !!selectedGroup.value &&
+    canEditRoutes(selectedGroup.value.id) &&
+    !reordering.value,
+);
 const canReorder = computed(
   () =>
     !!selectedGroup.value && canEditRoutes(selectedGroup.value.id) && groupRoutes.value.length > 1,
+);
+
+/**
+ * Labels of the group bar's buttons, given up so the group name stays whole:
+ * first Reorder turns into an icon, then New route; only with both on icons
+ * may a long name be cut short.
+ */
+const barLabels = ref<"all" | "new" | "none">("all");
+const groupBarEl = ref<HTMLElement | null>(null);
+const groupNameEl = ref<HTMLElement | null>(null);
+const barSizerEl = ref<HTMLElement | null>(null);
+
+function fitBarLabels(): void {
+  const bar = groupBarEl.value;
+  const name = groupNameEl.value;
+  const sizer = barSizerEl.value;
+  if (!bar || !name || !sizer) return;
+  // Fractional widths throughout: a rounded pixel decides whether a name fits.
+  const px = (value: string): number => parseFloat(value) || 0;
+  const gap = (el: Element | null): number => (el ? px(getComputedStyle(el).columnGap) : 0);
+  const width = (el: Element | Range | null | undefined): number =>
+    el?.getBoundingClientRect().width ?? 0;
+  const barStyle = getComputedStyle(bar);
+  const room =
+    width(bar) -
+    px(barStyle.paddingLeft) -
+    px(barStyle.paddingRight) -
+    px(barStyle.borderLeftWidth) -
+    px(barStyle.borderRightWidth) -
+    1;
+  // The whole name (its text, not the ellipsis box) plus the count after it.
+  const text = document.createRange();
+  text.selectNodeContents(name);
+  const count = name.nextElementSibling;
+  const heading = width(text) + (count ? gap(name.parentElement) + width(count) : 0);
+  const full = (key: string): number => width(sizer.querySelector(`[data-size="${key}"]`));
+  // An icon-only button is a 2rem square (see `.labels-*` below).
+  const icon = 2 * px(getComputedStyle(document.documentElement).fontSize);
+  const reorder = full("reorder");
+  const create = full("new");
+  const actionsGap = gap(bar.querySelector(".console-context-actions"));
+  const fits = (widths: number[]): boolean => {
+    const shown = widths.filter((w) => w > 0);
+    const actions = shown.reduce((sum, w) => sum + w, 0) + (shown.length - 1) * actionsGap;
+    return heading + px(barStyle.columnGap) + actions <= room;
+  };
+  if (fits([reorder, create])) barLabels.value = "all";
+  else if (fits([reorder && icon, create])) barLabels.value = "new";
+  else barLabels.value = "none";
+}
+
+let barObserver: ResizeObserver | undefined;
+watch(groupBarEl, (bar) => {
+  barObserver?.disconnect();
+  if (!bar || typeof ResizeObserver === "undefined") return;
+  barObserver = new ResizeObserver(() => fitBarLabels());
+  barObserver.observe(bar);
+});
+watch(
+  () => [
+    selectedGroup.value?.name,
+    groupRoutes.value.length,
+    locale.value,
+    canReorder.value,
+    canCreateRoute.value,
+    reordering.value,
+  ],
+  () => nextTick(fitBarLabels),
+);
+onMounted(() => document.fonts?.ready.then(fitBarLabels));
+onBeforeUnmount(() => barObserver?.disconnect());
+
+const canCreateGroup = computed(
+  () => !needLogin.value && !routeGroupId.value && view.value === "groups" && isSuper.value,
 );
 
 const logFilterGroup = ref("");
@@ -1178,6 +1292,33 @@ async function onDeleteGroup(group: Group): Promise<void> {
 .console-group-bar .console-context-actions {
   flex: none;
 }
+/* Labels given up for the name (see fitBarLabels): an icon-only button
+   turns into a 2rem square. */
+.labels-new .console-reorder-label,
+.labels-none .console-reorder-label,
+.labels-none .console-new-route-label {
+  display: none;
+}
+.labels-new .console-reorder-btn,
+.labels-none .console-reorder-btn,
+.labels-none .console-new-route-btn {
+  width: 2rem;
+  padding-inline: 0;
+}
+/* Measures the buttons with their labels without showing or overflowing. */
+.console-bar-sizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: 100%;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+.console-bar-sizer > * {
+  flex: none;
+}
 .console-context-bar .console-reorder-hint {
   flex-basis: 100%;
   font-size: 0.78rem;
@@ -1233,13 +1374,6 @@ async function onDeleteGroup(group: Group): Promise<void> {
   }
 }
 @media (max-width: 620px) {
-  .console-reorder-label {
-    display: none;
-  }
-  .console-reorder-btn {
-    width: 2rem;
-    padding-inline: 0;
-  }
   /* Title left with theme/language pinned top-right; page actions below, right-aligned. */
   .console-topbar {
     display: grid;
