@@ -8,6 +8,8 @@ export function useGroupsApi() {
   const roles = ref<Record<string, GroupRole>>({});
   const loading = ref(false);
   const error = ref("");
+  /** A load has succeeded: an id missing from `groups` really is unknown. */
+  const loaded = ref(false);
 
   function roleOf(groupId: string): GroupRole | undefined {
     return isSuper.value ? "owner" : roles.value[groupId];
@@ -36,6 +38,7 @@ export function useGroupsApi() {
       groups.value = data.groups ?? [];
       isSuper.value = data.isSuper ?? false;
       roles.value = data.roles ?? {};
+      loaded.value = true;
     } catch (err) {
       if (!needLogin.value) error.value = err instanceof Error ? err.message : String(err);
     } finally {
@@ -67,6 +70,7 @@ export function useGroupsApi() {
     canEditGroup,
     canEditRoutes,
     loading,
+    loaded,
     needLogin,
     error,
     load,
