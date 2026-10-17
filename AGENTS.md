@@ -127,7 +127,7 @@ server/                  # Nitro server
     │   ├── tenants.ts   # Per-group webhook secret CRUD (KV tenant:{groupId}, 32-byte random hex)
     │   └── richheader.ts # GET /api/richheader: Open Graph page for Telegram avatar link-preview card
     ├── observability/  # delivery metrics aggregation
-    │   └── metrics.ts  # DeliveryMetrics + getDeliveryMetrics (SQL GROUP BY over send_logs: totals, per platform/event/status, duration, attempts, recent failures)
+    │   └── metrics.ts  # DeliveryMetrics + getDeliveryMetrics (SQL GROUP BY over send_logs in one D1 batch: totals, per platform/event/status, duration, attempts, recent failures)
     ├── storage/        # storage primitives: canUseD1 probe, D1 config store (L1 memory → L2 KV cache → L3 D1), R2 payload store
     │   ├── d1.ts       # canUseD1(db) — prepare+batch probe for D1 availability (falls back to KV)
     │   ├── config-store.ts # ConfigStore (loadRoutes/saveRoutes/loadGroups/saveGroups/invalidateCache) backed by d1_groups/d1_routes (per-group `position` order when migrated), seeds from KV + syncs cache
@@ -172,7 +172,7 @@ tests/__snapshots__/     # formatter snapshot golden files (toMatchSnapshot)
 - Route messages to Discord channels/threads and Telegram chats/topics via REST
 - Edit already-sent messages in place for `workflow_run` / `check_run` progress (stable `updateKey`, `message_tracking` via D1 with KV `msg:*` fallback); `workflow_run` keys on the workflow id while `check_run` keys on check name + commit SHA (falling back to the run id) so providers that emit a fresh run id per phase — e.g. Cloudflare Pages — still edit the same message
 - Record every dispatch attempt to D1 `send_logs` (route id, event, target, ok/error, duration, error code)
-- Aggregate delivery metrics (`server/lib/observability/metrics.ts`) from `send_logs` — totals, ok/failed counts + failure rate, per-platform/per-event/per-status breakdowns, average duration and attempts, recent failures; `getDeliveryMetrics(db, groupId?)` scopes every query by `group_id` when a group is passed
+- Aggregate delivery metrics (`server/lib/observability/metrics.ts`) from `send_logs` — totals, ok/failed counts + failure rate, per-platform/per-event/per-status breakdowns, average duration and attempts, recent failures; `getDeliveryMetrics(db, groupId?)` sends all seven queries as one D1 `batch` (a single round trip and a consistent snapshot) and scopes every query by `group_id` when a group is passed
 - Expose admin observability endpoints — `GET /admin/api/metrics?groupId=` (delivery metrics, optional group scope; recent failures group-scoped for non-super) and `GET /admin/api/delivery/:deliveryId` (all send-log attempts for one delivery, group-scoped) — through the `/admin/api/[...slug]` catch-all route (`server/routes/admin/api/[...slug].ts`) that wires every admin API handler to its method+path
 - Serve a per-group webhook ingress (`POST /webhook/{groupId}`, per-group secret in KV `tenant:{groupId}`) for Gitea/classic-GitHub/custom senders; only that group's routes fire; dedup keys are provider- and tenant-scoped (`delivery:{provider}:{groupId}:{id}` via `idempotencyStore`, D1 `dedup_keys` with KV fallback)
 - Issue a per-request correlation id (`requestId`) in webhook responses and dispatch logs

@@ -25,7 +25,7 @@ export interface SendRecord {
 const COLUMNS =
   "id, ts, route_id, group_id, event, repo, target, ok, error, status, message_id, delivery_id, platform, actor, action, duration_ms, error_code, attempts, detail";
 
-interface LogRow {
+export interface LogRow {
   id: number;
   ts: number;
   route_id: string;
@@ -47,7 +47,7 @@ interface LogRow {
   detail: string | null;
 }
 
-function toRecord(r: LogRow): SendRecord {
+export function toRecord(r: LogRow): SendRecord {
   return {
     id: r.id,
     ts: r.ts,
@@ -147,22 +147,30 @@ export async function getSendLogByDelivery(
   }
 }
 
+/** The latest failed sends, optionally of one group (rows map with `toRecord`). */
+export function failedSendLogStatement(
+  db: D1Database,
+  limit = 20,
+  groupId?: string,
+): D1PreparedStatement {
+  return groupId
+    ? db
+        .prepare(
+          `SELECT ${COLUMNS} FROM send_logs WHERE ok = 0 AND group_id = ? ORDER BY ts DESC LIMIT ?`,
+        )
+        .bind(groupId, limit)
+    : db
+        .prepare(`SELECT ${COLUMNS} FROM send_logs WHERE ok = 0 ORDER BY ts DESC LIMIT ?`)
+        .bind(limit);
+}
+
 export async function getFailedSendLog(
   db: D1Database,
   limit = 20,
   groupId?: string,
 ): Promise<SendRecord[]> {
   try {
-    const stmt = groupId
-      ? db
-          .prepare(
-            `SELECT ${COLUMNS} FROM send_logs WHERE ok = 0 AND group_id = ? ORDER BY ts DESC LIMIT ?`,
-          )
-          .bind(groupId, limit)
-      : db
-          .prepare(`SELECT ${COLUMNS} FROM send_logs WHERE ok = 0 ORDER BY ts DESC LIMIT ?`)
-          .bind(limit);
-    const { results } = await stmt.all<LogRow>();
+    const { results } = await failedSendLogStatement(db, limit, groupId).all<LogRow>();
     return results.map(toRecord);
   } catch (err) {
     log.warn({ err }, "Failed to load failed send log");

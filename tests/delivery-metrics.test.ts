@@ -50,6 +50,7 @@ function createMetricsDB(rowsBySql: Record<string, unknown[]>): D1Database {
     }
     return { results: [] };
   };
+  let batches = 0;
   return {
     prepare: (sql: string) => ({
       all: all(sql),
@@ -58,6 +59,13 @@ function createMetricsDB(rowsBySql: Record<string, unknown[]>): D1Database {
         run: async () => ({ success: true }),
       }),
     }),
+    batch: async (statements: Array<{ all: () => Promise<unknown> }>) => {
+      batches++;
+      return Promise.all(statements.map((s) => s.all()));
+    },
+    get batches(): number {
+      return batches;
+    },
   } as unknown as D1Database;
 }
 
@@ -102,6 +110,8 @@ describe("delivery metrics", () => {
       "COUNT(*) AS total": [{ total: 10, ok: 8 }],
     });
     const m = await getDeliveryMetrics(db);
+    // Every query goes out in a single batch (one D1 round trip).
+    expect((db as unknown as { batches: number }).batches).toBe(1);
     expect(m.total).toBe(10);
     expect(m.ok).toBe(8);
     expect(m.failed).toBe(2);
