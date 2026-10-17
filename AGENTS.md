@@ -9,8 +9,8 @@ Core pipeline: GitHub Webhook → Worker (verify + filter + format) → Discord 
 ## Key Decisions
 
 - Runtime: Cloudflare Workers via the Nitro `cloudflare_module` preset (`_worker.js`), H3 event handlers in `server/routes/`
-- UI: Vue 3 + Tailwind CSS v4 (`@tailwindcss/vite`) + `@recloudstudio/ui` (Nuxt module, `Rc` prefix); admin console is a client-side SPA (`routeRules: "/admin/**": { ssr: false }`), home/legal pages render server-side
-- Styling: ReCloud UI supplies semantic components and blue theme tokens; `app/assets/css/main.css` retains `--wh-*` RGB-triplet aliases for app-specific Tailwind utilities and bespoke layouts (avoiding collision with ReCloud's `--surface`/`--text`/`--border` hex tokens); theme switching supports auto/light/dark via `useTheme` / `ThemeToggle`, toggling `<html>.dark` with inline anti-flash head script
+- UI: Vue 3 + Tailwind CSS v4 (`@tailwindcss/vite`) + `@elysola/ui` (Nuxt module, `Rc` prefix); admin console is a client-side SPA (`routeRules: "/admin/**": { ssr: false }`), home/legal pages render server-side
+- Styling: Elysola UI supplies semantic components and blue theme tokens; `app/assets/css/main.css` retains `--wh-*` RGB-triplet aliases for app-specific Tailwind utilities and bespoke layouts (avoiding collision with Elysola's `--surface`/`--text`/`--border` hex tokens); theme switching supports auto/light/dark via `useTheme` / `ThemeToggle`, toggling `<html>.dark` with inline anti-flash head script
 - Discord interactions: HTTPS Interactions Endpoint (`POST /discord/interactions`, Ed25519-signed) — no Discord Gateway / Durable Object; bot stays offline, messages always sent via REST
 - Storage: D1 is the source of truth for config (routes/groups via `d1_routes`/`d1_groups`, see `server/lib/storage/config-store.ts`), send/audit logs, dedup (`dedup_keys`), delivery state (`delivery_state`) and message tracking (`message_tracking` via `server/lib/storage/d1.ts` `canUseD1` gate). KV keeps only cache + short-lived/ephemeral state (tokens, OAuth state, admin sessions, `msg:*`-adjacent locks, per-group secrets `tenant:*`, invites, i18n overrides) with explicit TTLs. R2 parks oversized queue payloads (`webhooks/YYYY/MM/DD/*.json`, `server/lib/storage/payload.ts`) instead of KV. A `storage-prune` scheduled task cleans up expired dedup/delivery/message-tracking rows
 - Signature verification: Web Crypto API (HMAC-SHA256 for GitHub/Gitea, Ed25519 for Discord, timing-safe secret-token compare for Telegram)
@@ -34,7 +34,7 @@ Core pipeline: GitHub Webhook → Worker (verify + filter + format) → Discord 
 ```text
 app/                     # Vue 3 UI (Nuxt app dir)
 ├── app.vue              # root component (NuxtPage)
-├── assets/css/main.css  # Tailwind v4 entry: ReCloud-compatible RGB aliases + bespoke layout classes + Vue transition glue
+├── assets/css/main.css  # Tailwind v4 entry: Elysola-compatible RGB aliases + bespoke layout classes + Vue transition glue
 ├── pages/               # index (landing), terms, privacy, admin/[...slug] (console SPA)
 ├── components/          # ConsolePage (sidebar shell + topbar), AdminHome (overview dashboard),
 │                        # RouteCard/Editor (RouteEditor has FilterNodeEditor AST builder + TagInput chips),

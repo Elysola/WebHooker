@@ -35,6 +35,15 @@ const KV_GROUPS_KEY = "config:groups";
 
 const KV_CACHE_TTL = 3600;
 
+function parseJson<T>(value: string, label: string): T | null {
+  try {
+    return JSON.parse(value) as T;
+  } catch (err) {
+    log.warn({ err, label }, "Ignoring malformed configuration row");
+    return null;
+  }
+}
+
 export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
   let routesCache: { routes: Route[]; expiresAt: number } | null = null;
   let groupsCache: { groups: Group[]; expiresAt: number } | null = null;
@@ -46,18 +55,29 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
     if (typeof stmt.all !== "function") return [];
     const { results } = await stmt.all<D1RouteRow>();
     if (!results || results.length === 0) return [];
-    return results.map((r) => ({
-      id: r.id,
-      groupId: r.group_id,
-      name: r.name,
-      enabled: r.enabled === 1,
-      filters: JSON.parse(r.filters),
-      targets: JSON.parse(r.targets),
-      stop: r.stop === 1,
-      fallback: r.fallback === 1,
-      discordRoleIds: r.discord_role_ids ? JSON.parse(r.discord_role_ids) : undefined,
-      ast: r.ast ? JSON.parse(r.ast) : undefined,
-    }));
+    return results.flatMap((r) => {
+      const filters = parseJson<Route["filters"]>(r.filters, `route:${r.id}:filters`);
+      const targets = parseJson<Route["targets"]>(r.targets, `route:${r.id}:targets`);
+      const discordRoleIds = r.discord_role_ids
+        ? parseJson<Route["discordRoleIds"]>(r.discord_role_ids, `route:${r.id}:discord_role_ids`)
+        : undefined;
+      const ast = r.ast ? parseJson<Route["ast"]>(r.ast, `route:${r.id}:ast`) : undefined;
+      if (!filters || !targets || (r.discord_role_ids && !discordRoleIds) || (r.ast && !ast)) {
+        return [];
+      }
+      return [{
+        id: r.id,
+        groupId: r.group_id,
+        name: r.name,
+        enabled: r.enabled === 1,
+        filters,
+        targets,
+        stop: r.stop === 1,
+        fallback: r.fallback === 1,
+        discordRoleIds: discordRoleIds ?? undefined,
+        ast: ast ?? undefined,
+      }];
+    });
   }
 
   async function loadGroupsFromD1(): Promise<Group[]> {
@@ -65,7 +85,10 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
     if (typeof stmt.all !== "function") return [];
     const { results } = await stmt.all<D1GroupRow>();
     if (!results || results.length === 0) return [];
-    return results.map((r) => JSON.parse(r.data) as Group);
+    return results.flatMap((r) => {
+      const group = parseJson<Group>(r.data, `group:${r.id}`);
+      return group ? [group] : [];
+    });
   }
 
   async function loadRoutesFromKV(): Promise<Route[]> {
@@ -156,7 +179,9 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
 
     const statements: D1PreparedStatement[] = [];
 
-    // First, delete routes for groups that will be removed
+    // Delete routes only when a group is actually removed. Group renames move
+    // routes before calling saveGroups, so the new group id is no longer in
+    // this list and the routes survive the group update.
     for (const groupId of toDelete) {
       statements.push(db.prepare("DELETE FROM d1_routes WHERE group_id = ?").bind(groupId));
     }

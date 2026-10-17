@@ -3,7 +3,7 @@
 ## 开发环境设置
 
 ```bash
-git clone https://github.com/ReCloudStudio/WebHooker.git
+git clone https://github.com/Elysola/WebHooker.git
 cd WebHooker
 bun install
 cp .env.example .dev.vars   # 填入密钥
@@ -15,7 +15,7 @@ bun run dev                  # 启动本地开发服务器
 ```text
 app/                     # Vue 3 UI（Nuxt app 目录）
 ├── app.vue              # 根组件 (NuxtPage)
-├── assets/css/main.css  # Tailwind CSS v4 入口：ReCloud UI 兼容的 RGB 别名 + 专用布局类
+├── assets/css/main.css  # Tailwind CSS v4 入口：Elysola UI 兼容的 RGB 别名 + 专用布局类
 ├── pages/               # index（落地页）、terms、privacy、admin/[...slug]（控制台 SPA）
 ├── components/          # ConsolePage、RouteCard/Editor、GroupEditor、MembersPanel、WebhookPanel、
 │                        # SendLogs、AuditLog、AppToasts、LegalLayout

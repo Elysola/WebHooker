@@ -16,7 +16,7 @@ GitHub / Gitea webhook → Discord / Telegram / Feishu dispatcher. Receives webh
 - `workflow_run` / `check_run` progress is edited **in place** (single message updated as the run advances) on Discord, Telegram, and Feishu — `check_run` tracks by check name + commit SHA so deployments that issue a fresh run id per phase (e.g. Cloudflare Pages) still edit the same message; `workflow_run` embeds a colored per-job code block (🟢 success, 🔴 failure, running/queued inline)
 - **Per-group webhook log channel** — point a group at a Discord channel/thread, Telegram chat/topic, or Feishu chat and every webhook the group's routes dispatch is summarized there (✅/❌ per route × target)
 - GitHub OAuth for user actions (comment, edit comment, delete comment, merge, close, react)
-- **Web UI config console** (`/admin`) — ReCloud UI-based console with centered route/group dialogs; manage routes and groups with GitHub OAuth + admin whitelist, view send logs
+- **Web UI config console** (`/admin`) — Elysola UI-based console with centered route/group dialogs; manage routes and groups with GitHub OAuth + admin whitelist, view send logs
 - **Discord Interactions Endpoint** (Ed25519-verified) for `/gh` slash commands, message context-menu commands, PR merge/close buttons, and comment modals
 - **Telegram `/gh` commands** (login/logout/comment/merge/close) via the Telegram webhook, with avatar link-preview cards
 - Cloudflare D1 for config (routes/groups), send logs, platform account links, dedup, delivery state and message tracking + KV for ephemeral state/cache/security tokens, + optional R2 for oversized payloads
@@ -103,7 +103,7 @@ Routes are stored in D1 (`d1_routes`, seeded from legacy KV `config:routes` on f
 ]
 ```
 
-`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (optional `topicId` for a topic). A route may also set `stop: true` (skip later routes). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.worldexecute.me/guide/routes) and [Groups & Access Control](https://webhooker.docs.worldexecute.me/guide/groups) guides for the full schema.
+`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (optional `topicId` for a topic). A route may also set `stop: true` (skip later routes). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.elysola.org/guide/routes) and [Groups & Access Control](https://webhooker.docs.elysola.org/guide/groups) guides for the full schema.
 
 ### Web UI (`/admin`)
 
@@ -119,7 +119,7 @@ Sign out at `/admin/logout`. Every group has `members` with a role (`owner` / `a
 
 ### Filter Types
 
-Every filter supports plain text, `*`/`?` globs, and `/regex/` patterns (case-insensitive); set `exclude: true` to invert. A `field` filter reads any payload value by JSONPath (arrays expand so any element matches) and accepts an `op` operator (default `eq`); `op: "exists"` checks presence without a `match`. Filters can also be grouped into an AST via an optional `ast` on a route (`all` / `any` / `not` nodes) to express boolean combinations beyond the default AND-list — when present, `ast` takes precedence over `filters`. The route editor provides a visual AST builder, chip multi-value input, a stateless match tester, and named filter fragments (stored in D1 `d1_fragments`). See the [Filter Tutorial](https://webhooker.docs.worldexecute.me/guide/filters) for the pattern syntax and the full filter reference.
+Every filter supports plain text, `*`/`?` globs, and `/regex/` patterns (case-insensitive); set `exclude: true` to invert. A `field` filter reads any payload value by JSONPath (arrays expand so any element matches) and accepts an `op` operator (default `eq`); `op: "exists"` checks presence without a `match`. Filters can also be grouped into an AST via an optional `ast` on a route (`all` / `any` / `not` nodes) to express boolean combinations beyond the default AND-list — when present, `ast` takes precedence over `filters`. The route editor provides a visual AST builder, chip multi-value input, a stateless match tester, and named filter fragments (stored in D1 `d1_fragments`). See the [Filter Tutorial](https://webhooker.docs.elysola.org/guide/filters) for the pattern syntax and the full filter reference.
 
 ## API
 
@@ -164,11 +164,11 @@ Every filter supports plain text, `*`/`?` globs, and `/regex/` patterns (case-in
 
 ## Setup Guides
 
-- **GitHub App** — create the app, subscribe to events, configure OAuth, and set the _Setup URL_ for tenant isolation: see [GitHub App Setup](https://webhooker.docs.worldexecute.me/guide/deployment#github-app-setup)
-- **Discord bot** — create the bot, invite it with `applications.commands` (combined permission integer `274877910016`), and configure the Interactions Endpoint: see [Discord Bot Setup](https://webhooker.docs.worldexecute.me/guide/deployment#discord-bot-setup). The bot never connects to the Discord Gateway, so it shows as **offline** — messaging is unaffected (always REST).
-- **Telegram bot** — create the bot with [@BotFather](https://t.me/BotFather), set `TELEGRAM_TOKEN` (optional `TELEGRAM_WEBHOOK_SECRET`); the webhook is synced automatically by the scheduled trigger: see [Telegram Bot Setup](https://webhooker.docs.worldexecute.me/guide/deployment#telegram-bot-setup)
-- **Feishu bot** — create a custom app, enable the bot, add it to the target group, and set `FEISHU_APP_ID` + `FEISHU_APP_SECRET`: see [Feishu Bot Setup](https://webhooker.docs.worldexecute.me/guide/deployment#feishu-bot-setup)
-- **Deployment** — KV namespace, D1 database + migrations, optional Queues, secrets, and deploy: see the [Deployment guide](https://webhooker.docs.worldexecute.me/guide/deployment)
+- **GitHub App** — create the app, subscribe to events, configure OAuth, and set the _Setup URL_ for tenant isolation: see [GitHub App Setup](https://webhooker.docs.elysola.org/guide/deployment#github-app-setup)
+- **Discord bot** — create the bot, invite it with `applications.commands` (combined permission integer `274877910016`), and configure the Interactions Endpoint: see [Discord Bot Setup](https://webhooker.docs.elysola.org/guide/deployment#discord-bot-setup). The bot never connects to the Discord Gateway, so it shows as **offline** — messaging is unaffected (always REST).
+- **Telegram bot** — create the bot with [@BotFather](https://t.me/BotFather), set `TELEGRAM_TOKEN` (optional `TELEGRAM_WEBHOOK_SECRET`); the webhook is synced automatically by the scheduled trigger: see [Telegram Bot Setup](https://webhooker.docs.elysola.org/guide/deployment#telegram-bot-setup)
+- **Feishu bot** — create a custom app, enable the bot, add it to the target group, and set `FEISHU_APP_ID` + `FEISHU_APP_SECRET`: see [Feishu Bot Setup](https://webhooker.docs.elysola.org/guide/deployment#feishu-bot-setup)
+- **Deployment** — KV namespace, D1 database + migrations, optional Queues, secrets, and deploy: see the [Deployment guide](https://webhooker.docs.elysola.org/guide/deployment)
 
 ### Bot Commands (comment on GitHub as yourself)
 
@@ -179,7 +179,7 @@ The bot registers native **slash** and **message context-menu** commands, synced
 /gh comment add|edit|del  link:<url>      (or right-click a notification → Apps → GitHub: 添加/编辑/删除评论)
 ```
 
-See the full reference in the [Bot Commands guide](https://webhooker.docs.worldexecute.me/guide/commands).
+See the full reference in the [Bot Commands guide](https://webhooker.docs.elysola.org/guide/commands).
 
 ## Development
 
@@ -192,7 +192,7 @@ bun test              # Unit tests
 
 ## Supported Events
 
-28 event formatters (push, pull_request, issues, workflow_run, release, ...) plus `custom` webhooks; unsupported events fall back to a generic formatter. See the full table with embed highlights in [Supported Events](https://webhooker.docs.worldexecute.me/events/supported).
+28 event formatters (push, pull_request, issues, workflow_run, release, ...) plus `custom` webhooks; unsupported events fall back to a generic formatter. See the full table with embed highlights in [Supported Events](https://webhooker.docs.elysola.org/events/supported).
 
 ## License
 

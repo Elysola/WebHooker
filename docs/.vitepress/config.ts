@@ -1,6 +1,6 @@
 import { defineConfig } from "vitepress";
 
-const github = "https://github.com/ReCloudStudio/WebHooker";
+const github = "https://github.com/Elysola/WebHooker";
 
 export default defineConfig({
   title: "WebHooker",
@@ -90,7 +90,7 @@ export default defineConfig({
         },
         footer: {
           message: "Released under the MIT License.",
-          copyright: "Copyright 2026 ReCloud Studio",
+          copyright: "Copyright 2026 Elysola",
         },
         editLink: {
           pattern: `${github}/edit/main/docs/:path`,
@@ -178,7 +178,7 @@ export default defineConfig({
         },
         footer: {
           message: "基于 MIT 许可发布。",
-          copyright: "Copyright 2026 ReCloud Studio",
+          copyright: "Copyright 2026 Elysola",
         },
         editLink: {
           pattern: `${github}/edit/main/docs/:path`,

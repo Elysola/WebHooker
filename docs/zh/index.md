@@ -11,7 +11,7 @@ hero:
       link: /zh/guide/getting-started
     - theme: alt
       text: 在 GitHub 上查看
-      link: https://github.com/ReCloudStudio/WebHooker
+      link: https://github.com/Elysola/WebHooker
 
 features:
   - title: 28 种事件格式化器

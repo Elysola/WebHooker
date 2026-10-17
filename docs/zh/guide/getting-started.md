@@ -10,7 +10,7 @@
 ## 安装
 
 ```bash
-git clone https://github.com/ReCloudStudio/WebHooker.git
+git clone https://github.com/Elysola/WebHooker.git
 cd WebHooker
 bun install
 ```

@@ -2,8 +2,8 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineNuxtConfig({
   compatibilityDate: "2025-07-15",
-  modules: ["@recloudstudio/ui/nuxt"],
-  recloudUI: {
+  modules: ["@elysola/ui/nuxt"],
+  elysolaUI: {
     prefix: "Rc",
   },
   css: ["~/assets/css/main.css"],

@@ -41,7 +41,7 @@ GitHub / Gitea Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 - **HTTP Framework**: Nuxt 4 / Nitro (H3)
 - **Discord delivery**: Discord REST API (interactions via an Ed25519-verified HTTPS Interactions Endpoint)
 - **Telegram delivery**: Telegram Bot API (webhook with optional secret-token verification)
-- **Web UI**: Nuxt 4 (Vue 3 + Tailwind CSS v4 + `@recloudstudio/ui`) — server-rendered home/legal pages, client-side `/admin` console
+- **Web UI**: Nuxt 4 (Vue 3 + Tailwind CSS v4 + `@elysola/ui`) — server-rendered home/legal pages, client-side `/admin` console
 - **Storage**: Cloudflare D1 (authoritative for config & logs) + KV (cache/transient state) + optional R2 (oversized payloads)
 - **Auth**: Web Crypto API (HMAC-SHA256, Ed25519), octokit (GitHub API)
 - **Language**: TypeScript

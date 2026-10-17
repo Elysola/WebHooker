@@ -3,7 +3,7 @@
 ## Development Setup
 
 ```bash
-git clone https://github.com/ReCloudStudio/WebHooker.git
+git clone https://github.com/Elysola/WebHooker.git
 cd WebHooker
 bun install
 cp .env.example .dev.vars   # Fill in secrets
@@ -15,7 +15,7 @@ bun run dev                  # Start local dev server
 ```text
 app/                     # Vue 3 UI (Nuxt app dir)
 ├── app.vue              # Root component (NuxtPage)
-├── assets/css/main.css  # Tailwind CSS v4 entry: ReCloud UI-compatible RGB aliases + bespoke layout classes
+├── assets/css/main.css  # Tailwind CSS v4 entry: Elysola UI-compatible RGB aliases + bespoke layout classes
 ├── pages/               # index (landing), terms, privacy, admin/[...slug] (console SPA)
 ├── components/          # ConsolePage, RouteCard/Editor, GroupEditor, MembersPanel, WebhookPanel,
 │                        # SendLogs, AuditLog, AppToasts, LegalLayout

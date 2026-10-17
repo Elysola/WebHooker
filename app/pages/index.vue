@@ -1,7 +1,7 @@
 <template>
   <main class="landing-shell">
     <section class="landing-hero">
-      <RcBadge variant="brand" size="sm">ReCloud Studio</RcBadge>
+      <RcBadge variant="brand" size="sm">Elysola</RcBadge>
       <div class="brand-lockup">
         <AppLogo :size="64" class="brand-logo" />
         <div>
@@ -75,8 +75,8 @@ import {
   ShieldCheck,
 } from "lucide-vue-next";
 
-const DEFAULT_REPO = "https://github.com/ReCloudStudio/WebHooker";
-const DEFAULT_DOCS = "https://webhooker.docs.worldexecute.me";
+const DEFAULT_REPO = "https://github.com/Elysola/WebHooker";
+const DEFAULT_DOCS = "https://webhooker.docs.elysola.org";
 
 const route = useRoute();
 const config = useRuntimeConfig();

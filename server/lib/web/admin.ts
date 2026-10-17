@@ -961,15 +961,9 @@ export async function adminGroupRename(
     return respondError(event, 400, `group id "${newId}" already exists`);
   }
 
-  const next = existing.map((g) => (g.id === groupId ? { ...g, id: newId } : g));
-  try {
-    await saveGroups(env.KV, next);
-  } catch (err) {
-    log.error({ err }, "Failed to save groups on rename");
-    return respondError(event, 500, "Failed to save groups");
-  }
-
-  // Re-point routes, fragments, the tenant webhook secret and pending invites.
+  // Re-point routes before saving the renamed group. The D1 group writer removes
+  // routes belonging to group ids that disappear; doing this in the opposite
+  // order would delete the old group's routes before they can be moved.
   const routes = await loadRoutes(env.KV);
   const touched = routes.filter((r) => r.groupId === groupId);
   if (touched.length > 0) {
@@ -978,6 +972,16 @@ export async function adminGroupRename(
       routes.map((r) => (r.groupId === groupId ? { ...r, groupId: newId } : r)),
     );
   }
+
+  const next = existing.map((g) => (g.id === groupId ? { ...g, id: newId } : g));
+  try {
+    await saveGroups(env.KV, next);
+  } catch (err) {
+    log.error({ err }, "Failed to save groups on rename");
+    return respondError(event, 500, "Failed to save groups");
+  }
+
+  // Re-point fragments, the tenant webhook secret and pending invites.
   const fragments = await loadFragments(env.DB);
   const touchedFragments = fragments.filter((f) => f.groupId === groupId);
   if (touchedFragments.length > 0) {

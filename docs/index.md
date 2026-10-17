@@ -11,7 +11,7 @@ hero:
       link: /guide/getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/ReCloudStudio/WebHooker
+      link: https://github.com/Elysola/WebHooker
 
 features:
   - title: 28 Event Formatters

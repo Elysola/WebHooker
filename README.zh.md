@@ -16,7 +16,7 @@ GitHub / Gitea webhook → Discord / Telegram / 飞书 分发服务。通过 Clo
 - `workflow_run` / `check_run` 进度**原地编辑**同一条消息（运行推进时更新），Discord、Telegram 与飞书均支持 —— `check_run` 以 check 名 + commit SHA 追踪，因此每个阶段都换新 run id 的部署（如 Cloudflare Pages）仍会编辑同一条消息；`workflow_run` 内嵌带颜色的逐作业代码块（🟢 成功、🔴 失败、运行中/排队中不着色）
 - **分组级 Webhook 日志频道** —— 为分组指定一个 Discord 频道/子区、Telegram 群组/话题或飞书群聊，该分组路由每次分发 webhook 都会向其中发送摘要（每条「路由 × 目标」一行，✅/❌ 结果）
 - GitHub OAuth 用户授权（评论、编辑评论、删除评论、合并、关闭、反应）
-- **Web 配置控制台**（`/admin`）— 基于 ReCloud UI，使用居中路由/分组对话框；通过 GitHub OAuth + 管理员白名单管理路由与分组、查看发送日志
+- **Web 配置控制台**（`/admin`）— 基于 Elysola UI，使用居中路由/分组对话框；通过 GitHub OAuth + 管理员白名单管理路由与分组、查看发送日志
 - **Discord Interactions Endpoint**（Ed25519 验签）支持 `/gh` 斜杠命令、消息右键菜单命令、PR 合并/关闭按钮与评论 modal
 - **Telegram `/gh` 命令**（login/logout/comment/merge/close），通过 Telegram webhook 接收，头像以链接预览卡片呈现
 - Cloudflare D1 存储配置（路由/分组）、发送日志、平台账号绑定、去重、投递状态与消息更新追踪 + KV 存储临时状态/缓存/安全令牌 + 可选 R2 存储超大负载
@@ -103,7 +103,7 @@ bunx wrangler dev    # 启动本地开发服务器
 ]
 ```
 
-`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（可选 `topicId` 指向子话题）。路由还可设置 `stop: true`（跳过后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.worldexecute.me/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.worldexecute.me/zh/guide/groups)指南。
+`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（可选 `topicId` 指向子话题）。路由还可设置 `stop: true`（跳过后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.elysola.org/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.elysola.org/zh/guide/groups)指南。
 
 ### Web 控制台（`/admin`）
 
@@ -119,7 +119,7 @@ bunx wrangler dev    # 启动本地开发服务器
 
 ### 过滤器类型
 
-所有过滤器均支持纯文本、`*`/`?` 通配符与 `/正则/`（不区分大小写）；设置 `exclude: true` 可取反。`field` 过滤器通过 JSONPath（`path`）读取任意载荷字段（数组会展开，任一元素匹配即可），并可用 `op` 指定比较操作符（默认 `eq`）；`op: "exists"` 只判断字段是否存在、无需 `match`。过滤器还可通过路由上可选的 `ast`（`all` / `any` / `not` 节点）组合为 AST，以表达默认 AND 列表之外的布尔组合——当 `ast` 存在时优先于 `filters`。路由编辑器提供可视化 AST 构建器、chip 多值输入、无状态试匹配器与命名过滤器片段（存于 D1 `d1_fragments`）。模式语法与完整过滤器参考见[过滤器教程](https://webhooker.docs.worldexecute.me/zh/guide/filters)。
+所有过滤器均支持纯文本、`*`/`?` 通配符与 `/正则/`（不区分大小写）；设置 `exclude: true` 可取反。`field` 过滤器通过 JSONPath（`path`）读取任意载荷字段（数组会展开，任一元素匹配即可），并可用 `op` 指定比较操作符（默认 `eq`）；`op: "exists"` 只判断字段是否存在、无需 `match`。过滤器还可通过路由上可选的 `ast`（`all` / `any` / `not` 节点）组合为 AST，以表达默认 AND 列表之外的布尔组合——当 `ast` 存在时优先于 `filters`。路由编辑器提供可视化 AST 构建器、chip 多值输入、无状态试匹配器与命名过滤器片段（存于 D1 `d1_fragments`）。模式语法与完整过滤器参考见[过滤器教程](https://webhooker.docs.elysola.org/zh/guide/filters)。
 
 ## API
 
@@ -164,10 +164,10 @@ bunx wrangler dev    # 启动本地开发服务器
 
 ## 配置教程
 
-- **GitHub App** — 创建应用、订阅事件、配置 OAuth 与 _Setup URL_（租户隔离）：见 [GitHub App 配置](https://webhooker.docs.worldexecute.me/zh/guide/deployment#github-app-设置)
-- **Discord 机器人** — 创建机器人、以 `applications.commands` scope 邀请（组合权限整数 `274877910016`）、配置 Interactions Endpoint：见 [Discord Bot 配置](https://webhooker.docs.worldexecute.me/zh/guide/deployment#discord-bot-设置)。bot 从不连接 Discord Gateway，因此显示为**离线**——消息推送不受影响（始终走 REST）。
-- **Telegram 机器人** — 用 [@BotFather](https://t.me/BotFather) 创建机器人，设置 `TELEGRAM_TOKEN`（可选 `TELEGRAM_WEBHOOK_SECRET`）；webhook 由定时任务自动同步：见 [Telegram 机器人配置](https://webhooker.docs.worldexecute.me/zh/guide/deployment#telegram-机器人配置)
-- **部署** — KV 命名空间、D1 数据库与迁移（含 0008 存储表）、可选 R2 Bucket 与 Queues、密钥、部署：见[部署指南](https://webhooker.docs.worldexecute.me/zh/guide/deployment)
+- **GitHub App** — 创建应用、订阅事件、配置 OAuth 与 _Setup URL_（租户隔离）：见 [GitHub App 配置](https://webhooker.docs.elysola.org/zh/guide/deployment#github-app-设置)
+- **Discord 机器人** — 创建机器人、以 `applications.commands` scope 邀请（组合权限整数 `274877910016`）、配置 Interactions Endpoint：见 [Discord Bot 配置](https://webhooker.docs.elysola.org/zh/guide/deployment#discord-bot-设置)。bot 从不连接 Discord Gateway，因此显示为**离线**——消息推送不受影响（始终走 REST）。
+- **Telegram 机器人** — 用 [@BotFather](https://t.me/BotFather) 创建机器人，设置 `TELEGRAM_TOKEN`（可选 `TELEGRAM_WEBHOOK_SECRET`）；webhook 由定时任务自动同步：见 [Telegram 机器人配置](https://webhooker.docs.elysola.org/zh/guide/deployment#telegram-机器人配置)
+- **部署** — KV 命名空间、D1 数据库与迁移（含 0008 存储表）、可选 R2 Bucket 与 Queues、密钥、部署：见[部署指南](https://webhooker.docs.elysola.org/zh/guide/deployment)
 
 ### Bot 指令（以本人身份评论 GitHub）
 
@@ -178,7 +178,7 @@ bot 通过定时任务（每 5 分钟）同步注册原生的**斜杠命令**与
 /gh comment add|edit|del  link:<链接>      （或右键通知 → 应用 → GitHub: 添加/编辑/删除评论）
 ```
 
-完整参考见[机器人命令指南](https://webhooker.docs.worldexecute.me/zh/guide/commands)。
+完整参考见[机器人命令指南](https://webhooker.docs.elysola.org/zh/guide/commands)。
 
 ## 开发命令
 
@@ -191,7 +191,7 @@ bun test              # 单元测试
 
 ## 支持的事件
 
-28 个事件格式化器（push、pull_request、issues、workflow_run、release 等）外加 `custom` webhook；不支持的事件回退到通用格式化器。带嵌入亮点的完整表格见[支持的事件](https://webhooker.docs.worldexecute.me/zh/events/supported)。
+28 个事件格式化器（push、pull_request、issues、workflow_run、release 等）外加 `custom` webhook；不支持的事件回退到通用格式化器。带嵌入亮点的完整表格见[支持的事件](https://webhooker.docs.elysola.org/zh/events/supported)。
 
 ## 许可证
 

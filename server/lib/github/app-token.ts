@@ -1,7 +1,7 @@
 import { createAppJwt } from "./oauth";
 
 export const GITHUB_API_VERSION = "2022-11-28";
-export const GITHUB_USER_AGENT = "WebHooker (https://github.com/ReCloudStudio/WebHooker)";
+export const GITHUB_USER_AGENT = "WebHooker (https://github.com/Elysola/WebHooker)";
 
 /**
  * Mint a short-lived installation access token for a GitHub App installation.

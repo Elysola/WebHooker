@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* ReCloud UI-compatible RGB aliases for app-specific Tailwind utilities. */
+/* Elysola UI-compatible RGB aliases for app-specific Tailwind utilities. */
 @theme inline {
   --font-ui: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;

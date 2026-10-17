@@ -8,7 +8,7 @@ Cloudflare Worker, receiving GitHub/Gitea webhooks and dispatching them to Disco
 [Bun](https://bun.sh) is the only supported package manager — never use `npm`/`npx`.
 
 ```bash
-git clone https://github.com/ReCloudStudio/WebHooker.git
+git clone https://github.com/Elysola/WebHooker.git
 cd WebHooker
 bun install
 cp .env.example .dev.vars   # Fill in secrets for local dev (wrangler reads this)
