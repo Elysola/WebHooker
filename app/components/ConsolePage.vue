@@ -209,6 +209,7 @@
             </section>
 
             <MembersPanel
+              :key="selectedGroup.id"
               :group="selectedGroup"
               :can-edit="canEditGroup(selectedGroup.id)"
               :saving="savingGroup"
@@ -217,6 +218,7 @@
 
             <WebhookPanel
               v-if="canEditGroup(selectedGroup.id)"
+              :key="selectedGroup.id"
               :group-id="selectedGroup.id"
               :can-edit="canEditGroup(selectedGroup.id)"
             />
@@ -250,6 +252,7 @@
                 <RcButton
                   v-if="canCreateGroup"
                   size="sm"
+                  :disabled="savingGroup"
                   @click="openNewGroup"
                   ><Plus :size="15" />{{ t("app.newGroup") }}</RcButton
                 >
@@ -291,6 +294,7 @@
                         variant="ghost"
                         size="icon"
                         class="h-7 w-7 text-muted hover:text-text"
+                        :disabled="savingGroup"
                         :title="t('groupEditor.editTitle')"
                         @click="openEditGroup(g)"
                       >
@@ -301,6 +305,7 @@
                         color="error"
                         size="icon"
                         class="h-7 w-7 text-muted hover:text-bad"
+                        :disabled="savingGroup"
                         :title="t('groups.delete')"
                         :aria-label="t('groups.delete')"
                         @click="onDeleteGroup(g)"
@@ -358,7 +363,7 @@
 
             <section v-if="!groupsLoading && !groups.length" class="console-empty">
               <RcEmptyState :title="t('groups.empty')"
-                ><RcButton v-if="isSuper" @click="openNewGroup"
+                ><RcButton v-if="isSuper" :disabled="savingGroup" @click="openNewGroup"
                   ><Plus :size="16" />{{ t("groups.createFirst") }}</RcButton
                 ></RcEmptyState
               >
@@ -589,7 +594,6 @@ const groupMissing = computed(
   () => !!routeGroupId.value && groupsLoaded.value && !groupsError.value && !selectedGroup.value,
 );
 
-
 const groupEditorOpen = ref(false);
 const editingGroup = ref<Group | null>(null);
 const savingGroup = ref(false);
@@ -618,6 +622,7 @@ function canWriteRoutes(): boolean {
   push(t("toast.routesNotReady"), "bad");
   return false;
 }
+
 // Bumped whenever an editor opens: a save may only close the editor it was
 // made from, never one opened since (on another page, for another route).
 let routeEditorSession = 0;
@@ -629,6 +634,7 @@ const orderChanged = computed(
     orderDraft.value.length !== groupRoutes.value.length ||
     orderDraft.value.some((r, i) => r.id !== groupRoutes.value[i]?.id),
 );
+
 const canCreateRoute = computed(
   () =>
     !needLogin.value &&
@@ -640,7 +646,6 @@ const canReorder = computed(
   () =>
     !!selectedGroup.value && canEditRoutes(selectedGroup.value.id) && groupRoutes.value.length > 1,
 );
-
 /**
  * Labels of the group bar's buttons, given up so the group name stays whole:
  * first Reorder turns into an icon, then New route; only with both on icons
@@ -751,6 +756,8 @@ watch(
   { immediate: true },
 );
 
+// Every page is a history entry: the browser's (or device's) back button
+// returns from a group's routes to the group list.
 function switchView(next: View): void {
   const path = next === "overview" ? "/admin" : `/admin/${next}`;
   if (route.path !== path) router.push(path);
@@ -1028,7 +1035,18 @@ function openEditGroup(group: Group): void {
   groupEditorOpen.value = true;
 }
 
+/**
+ * Group writes replace the whole group list, so they run one at a time, each
+ * built from the list the previous one saved; true when one may start.
+ */
+function canWriteGroups(): boolean {
+  if (!savingGroup.value) return true;
+  push(t("toast.groupsBusy"), "bad");
+  return false;
+}
+
 async function onSaveGroupFromPanel(group: Group): Promise<void> {
+  if (!canWriteGroups()) return;
   savingGroup.value = true;
   try {
     const next = groups.value.map((g) => (g.id === group.id ? group : g));
@@ -1043,6 +1061,7 @@ async function onSaveGroupFromPanel(group: Group): Promise<void> {
 }
 
 async function onSaveGroup(group: Group): Promise<void> {
+  if (!canWriteGroups()) return;
   const session = groupEditorSession;
   savingGroup.value = true;
   try {
@@ -1053,7 +1072,8 @@ async function onSaveGroup(group: Group): Promise<void> {
         // Id changed: rename first so routes/webhook secret/invites follow,
         // then persist the remaining edits under the new id.
         await groupsRename(editing.id, group.id);
-        next = [...groups.value.filter((g) => g.id !== editing.id), group];
+        // A list loaded meanwhile may already hold the new id as well.
+        next = [...groups.value.filter((g) => g.id !== editing.id && g.id !== group.id), group];
       } else {
         next = groups.value.map((g) => (g.id === editing.id ? group : g));
       }
@@ -1076,6 +1096,8 @@ async function onSaveGroup(group: Group): Promise<void> {
 }
 
 async function onDeleteGroup(group: Group): Promise<void> {
+  if (!canWriteGroups()) return;
+  const visit = pageVisit;
   // Fetch the real route count for this group instead of relying on the
   // routes of whichever group happens to be open in the detail view.
   let used = 0;
@@ -1087,16 +1109,21 @@ async function onDeleteGroup(group: Group): Promise<void> {
   } catch {
     // Count is best-effort; proceed without the warning.
   }
+  // The list was left while the count loaded: never ask on another page.
+  if (visit !== pageVisit) return;
   const confirmed = await confirm({
     title: t("confirm.deleteGroup", { name: group.name || group.id }),
     description: used ? t("confirm.deleteGroupWarn", { n: used }).trim() : undefined,
   });
-  if (!confirmed) return;
+  if (!confirmed || visit !== pageVisit || !canWriteGroups()) return;
+  savingGroup.value = true;
   try {
     await saveGroups(groups.value.filter((g) => g.id !== group.id));
     push(t("toast.groupDeleted"));
   } catch (err) {
     push(t("toast.deleteFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
+  } finally {
+    savingGroup.value = false;
   }
 }
 </script>
