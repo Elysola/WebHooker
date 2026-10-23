@@ -110,6 +110,13 @@ export function cap(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
 }
 
+/** A numeric character reference, kept verbatim when it names no valid code point. */
+function codePoint(value: number, original: string): string {
+  if (!Number.isInteger(value) || value < 0 || value > 0x10ffff) return original;
+  if (value >= 0xd800 && value <= 0xdfff) return original;
+  return String.fromCodePoint(value);
+}
+
 export function htmlToText(input: string): string {
   if (!input) return "";
   let out = input
@@ -125,8 +132,8 @@ export function htmlToText(input: string): string {
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&apos;/gi, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(Number(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, hex: string) => codePoint(parseInt(hex, 16), m))
+    .replace(/&#(\d+);/g, (m, dec: string) => codePoint(Number(dec), m))
     .replace(/&amp;/gi, "&");
   out = out
     .replace(/[ \t]+\n/g, "\n")
