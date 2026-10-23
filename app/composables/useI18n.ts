@@ -114,6 +114,8 @@ const en: Dict = {
   "members.inviteBad": "This invite is invalid or expired.",
   "install.ok":
     "GitHub App installation registered — the group has been created and bound to this installation.",
+  "install.forbidden":
+    "Your GitHub account cannot manage this installation, so it was not bound. Sign in with an account that administers it.",
   "webhook.title": "Webhook endpoint",
   "webhook.note": "(per-group URL + secret)",
   "webhook.empty": "Not configured. Generate a secret to enable the group's own webhook endpoint.",
@@ -565,6 +567,7 @@ const zh: Dict = {
   "members.inviteOk": "邀请已接受 —— 欢迎！",
   "members.inviteBad": "该邀请无效或已过期。",
   "install.ok": "GitHub App 安装已注册 —— 分组已创建并绑定到该安装。",
+  "install.forbidden": "你的 GitHub 账号无权管理该安装，未进行绑定。请使用该安装的管理员账号登录。",
   "webhook.title": "Webhook 入口",
   "webhook.note": "（分组独立的 URL + secret）",
   "webhook.empty": "未配置。生成 secret 即可启用该分组的独立 webhook 入口。",

@@ -746,6 +746,7 @@ onMounted(() => {
     if (invite === "ok") push(t("members.inviteOk"));
     else if (invite != null && invite !== "ok") push(t("members.inviteBad"), "bad");
     if (params.get("install") === "ok") push(t("install.ok"));
+    if (params.get("error") === "install-forbidden") push(t("install.forbidden"), "bad");
   }
   loadGroups();
 });
