@@ -8,6 +8,12 @@ interface DiscordMessage {
 }
 
 /**
+ * Longest rate-limit wait (seconds) slept inside one request; a longer one is
+ * returned as a 429 failure so the delivery queue retries it later instead.
+ */
+const MAX_INLINE_RETRY_AFTER = 10;
+
+/**
  * Longest a single API call may take. Bounded, so a message edit always ends
  * well within the update-chain lock it runs under (see `deliverUpdate`).
  */
@@ -33,10 +39,20 @@ async function request(
       });
 
       if (res.status === 429) {
-        const rateLimit = (await res.json()) as { retry_after?: number };
-        const retryAfter = (rateLimit.retry_after ?? 1) * 1000;
+        const rateLimit = (await res.json().catch(() => ({}))) as { retry_after?: number };
+        const seconds = Number(rateLimit.retry_after);
+        const retryAfter = Number.isFinite(seconds) && seconds > 0 ? seconds : 1;
         log.warn({ retryAfter, attempt }, "Rate limited");
-        await new Promise((r) => setTimeout(r, retryAfter));
+        if (retryAfter > MAX_INLINE_RETRY_AFTER || attempt === 2) {
+          return {
+            ok: false,
+            error: `Rate limited (retry_after=${retryAfter})`,
+            errorCode: "RATE_LIMITED",
+            status: 429,
+            attempts: attempt + 1,
+          };
+        }
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
         continue;
       }
 
