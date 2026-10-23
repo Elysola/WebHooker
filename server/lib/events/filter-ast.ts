@@ -130,7 +130,7 @@ function extractBranch(event: WebhookEvent): string | undefined {
   const p = event.payload;
   switch (event.event) {
     case "push":
-      return typeof p.ref === "string" ? p.ref.replace("refs/heads/", "") : undefined;
+      return typeof p.ref === "string" ? p.ref.replace(/^refs\/heads\//, "") : undefined;
     case "pull_request":
     case "pull_request_review":
     case "pull_request_review_comment":
@@ -142,14 +142,22 @@ function extractBranch(event: WebhookEvent): string | undefined {
       return (p.workflow_run as { head_branch?: string } | undefined)?.head_branch;
     case "check_suite":
       return (p.check_suite as { head_branch?: string } | undefined)?.head_branch;
+    case "check_run":
+      return (p.check_run as { check_suite?: { head_branch?: string } } | undefined)?.check_suite
+        ?.head_branch;
     case "workflow_job":
       return (p.workflow_job as { head_branch?: string } | undefined)?.head_branch;
     case "deployment":
-      return typeof p.ref === "string" ? p.ref.replace("refs/heads/", "") : undefined;
+    case "deployment_status": {
+      // The deployed ref lives on the deployment object (a top-level `ref` is
+      // only read as a fallback).
+      const ref = (p.deployment as { ref?: unknown } | undefined)?.ref ?? p.ref;
+      return typeof ref === "string" ? ref.replace(/^refs\/heads\//, "") : undefined;
+    }
     case "commit_comment":
       return undefined;
     case "code_scanning_alert":
-      return typeof p.ref === "string" ? p.ref : undefined;
+      return typeof p.ref === "string" ? p.ref.replace(/^refs\/heads\//, "") : undefined;
     default:
       return undefined;
   }
