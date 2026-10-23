@@ -11,6 +11,24 @@ interface FeishuResponse {
   data?: { message_id?: string } & Record<string, unknown>;
   error?: { message?: string };
 }
+
+/** Feishu business codes for "slow down" (group message rate limit, API frequency limit). */
+const RATE_LIMIT_CODES = new Set([230020, 99991400]);
+/** Feishu business codes for an invalid or expired tenant access token. */
+const TOKEN_CODES = new Set([99991661, 99991663, 99991664, 99991668]);
+
+/**
+ * The error code of a failed call: transient business codes map to the codes
+ * the delivery queue retries (`RATE_LIMITED`, `FEISHU_TOKEN`), whatever HTTP
+ * status Feishu answered with.
+ */
+function errorCodeOf(status: number, code: number | undefined): string {
+  if (code != null && RATE_LIMIT_CODES.has(code)) return "RATE_LIMITED";
+  if (code != null && TOKEN_CODES.has(code)) return "FEISHU_TOKEN";
+  if (status >= 500) return "FEISHU_5XX";
+  return code != null && code !== 0 ? `FEISHU_${code}` : "FEISHU_ERROR";
+}
+
 /**
  * Longest a single API call may take. Bounded, so a message edit always ends
  * well within the update-chain lock it runs under (see `deliverUpdate`).
@@ -43,9 +61,19 @@ async function feishuRequest(
       lastStatus = res.status;
 
       if (res.status === 429) {
-        const retryAfter = Number(res.headers.get("retry-after") || "1");
+        const header = Number(res.headers.get("retry-after") || "1");
+        const retryAfter = Number.isFinite(header) && header > 0 ? header : 1;
         lastError = `Rate limited (retry_after=${retryAfter})`;
         log.warn({ retryAfter, attempt, label }, "Feishu rate limited");
+        if (retryAfter > 10 || attempt === 2) {
+          return {
+            ok: false,
+            error: lastError,
+            errorCode: "RATE_LIMITED",
+            status: 429,
+            attempts: attempt + 1,
+          };
+        }
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
         continue;
       }
@@ -61,7 +89,7 @@ async function feishuRequest(
         return {
           ok: false,
           error: lastError,
-          errorCode: res.status >= 500 ? "FEISHU_5XX" : "FEISHU_ERROR",
+          errorCode: errorCodeOf(res.status, data?.code),
           status: res.status,
           attempts: attempt + 1,
         };
@@ -76,7 +104,7 @@ async function feishuRequest(
         return {
           ok: false,
           error: lastError,
-          errorCode: `FEISHU_${data.code}`,
+          errorCode: errorCodeOf(res.status, data.code),
           status: res.status,
           attempts: attempt + 1,
         };
