@@ -11,6 +11,11 @@ interface FeishuResponse {
   data?: { message_id?: string } & Record<string, unknown>;
   error?: { message?: string };
 }
+/**
+ * Longest a single API call may take. Bounded, so a message edit always ends
+ * well within the update-chain lock it runs under (see `deliverUpdate`).
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
 
 async function feishuRequest(
   url: string,
@@ -33,6 +38,7 @@ async function feishuRequest(
         method,
         headers,
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       lastStatus = res.status;
 
@@ -135,6 +141,7 @@ export async function getTenantAccessToken(env: Env): Promise<TokenResult> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const data = (await res.json().catch(() => null)) as {
       code?: number;
