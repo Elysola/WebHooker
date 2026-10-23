@@ -322,6 +322,11 @@ export interface NeutralMessage {
    */
   updateKey?: string;
   /**
+   * The chain key this message had before `updateKey` changed shape, used
+   * only to find a message tracked under the old key (then re-keyed).
+   */
+  legacyUpdateKey?: string;
+  /**
    * Discord role ids to mention in the message content (set by dispatch from
    * the route's `discordRoleIds`). Only used by the Discord driver.
    */
