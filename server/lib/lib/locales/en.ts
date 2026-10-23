@@ -208,5 +208,6 @@ export const en = {
     delivery: "Delivery",
     route_ok: "{route} → {target}",
     route_fail: "{route} → {target}: {error}",
+    route_earlier: "{route} → {target}: handled by an earlier attempt",
   },
 };

@@ -209,5 +209,6 @@ export const zh = {
     delivery: "投递",
     route_ok: "{route} → {target}",
     route_fail: "{route} → {target}: {error}",
+    route_earlier: "{route} → {target}：已在之前的尝试中处理",
   },
 };
