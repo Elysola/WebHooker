@@ -172,7 +172,8 @@ function stringify(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === undefined || value === null) return "";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
+  // Payload values are JSON; anything else (should it appear) compares as "".
+  return JSON.stringify(value) ?? "";
 }
 
 function toNumber(value: unknown): number | null {
@@ -203,8 +204,11 @@ function walkPath(node: unknown, parts: string[], index: number, out: unknown[])
     return;
   }
   if (node === null || node === undefined || typeof node !== "object") return;
-  const next = (node as Record<string, unknown>)[parts[index]!];
-  walkPath(next, parts, index + 1, out);
+  // Own properties only: `constructor`, `__proto__`, `toString`... are not
+  // payload data and must never reach the comparison.
+  const key = parts[index]!;
+  if (!Object.prototype.hasOwnProperty.call(node, key)) return;
+  walkPath((node as Record<string, unknown>)[key], parts, index + 1, out);
 }
 
 function valueList(filter: Filter, event: WebhookEvent): unknown[] {

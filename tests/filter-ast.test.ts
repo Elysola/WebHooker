@@ -191,3 +191,13 @@ describe("filter-ast pattern engine", () => {
     expect(evaluateFilterNode({ type: "repo", match: "acme" }, ev)).toBe(false);
   });
 });
+
+describe("filter-ast payload paths", () => {
+  test("never reads inherited properties", () => {
+    const node = { type: "field" as const, path: "constructor", match: "x" };
+    expect(evaluateFilterNode(node, event())).toBe(false);
+    expect(evaluateFilterNode({ type: "field", path: "__proto__", op: "exists" }, event())).toBe(
+      false,
+    );
+  });
+});
