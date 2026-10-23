@@ -107,9 +107,9 @@ export async function sendMessage(
   message: unknown,
   threadId?: string,
 ): Promise<SendResult> {
-  const url = threadId
-    ? `${DISCORD_API}/channels/${threadId}/messages`
-    : `${DISCORD_API}/channels/${channelId}/messages`;
+  // Ids are path segments: encoded, so no stored value can address another
+  // resource (`x/../123` is never the channel `123`).
+  const url = `${DISCORD_API}/channels/${encodeURIComponent(threadId || channelId)}/messages`;
   return request(url, "POST", token, message, channelId);
 }
 
@@ -120,7 +120,7 @@ export async function editMessage(
   message: unknown,
   threadId?: string,
 ): Promise<SendResult> {
-  const base = threadId ?? channelId;
-  const url = `${DISCORD_API}/channels/${base}/messages/${messageId}`;
+  const base = encodeURIComponent(threadId || channelId);
+  const url = `${DISCORD_API}/channels/${base}/messages/${encodeURIComponent(messageId)}`;
   return request(url, "PATCH", token, message, channelId);
 }
