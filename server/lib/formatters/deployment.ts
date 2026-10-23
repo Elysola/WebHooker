@@ -137,7 +137,7 @@ export function formatDeploymentStatus(
 
   fields.push({
     name: t("fields.status"),
-    value: `${em(emoji)}${status}`,
+    value: `${em(emoji)}${state}`,
     inline: true,
   });
 
