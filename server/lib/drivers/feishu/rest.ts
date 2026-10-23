@@ -1,9 +1,16 @@
 import { log } from "../../lib/log";
+import { sharedFlight, type Flight } from "../../lib/shared-flight";
 import type { Env } from "../../types";
 import type { SendResult } from "../types";
 
 const FEISHU_API = "https://open.feishu.cn";
-const TOKEN_KEY = "feishu:token";
+/**
+ * The cached tenant token of the configured app: switching apps (another
+ * FEISHU_APP_ID) never sends with the previous app's token.
+ */
+export function tokenKey(env: Env): string {
+  return `feishu:token:${env.FEISHU_APP_ID?.trim() ?? ""}`;
+}
 
 interface FeishuResponse {
   code?: number;
@@ -147,12 +154,67 @@ async function feishuRequest(
   };
 }
 
+/** How long this isolate uses a token before reading KV again. */
+const HELD_TOKEN_MS = 5 * 60_000;
+/**
+ * A failed token request is answered from memory this long: targets sent one
+ * after another in the same delivery then fail at once instead of each
+ * reading KV and asking Feishu again (the delivery is retried later anyway).
+ */
+const FAILED_TOKEN_MS = 5_000;
+
 interface TokenResult {
   ok: boolean;
   token?: string;
   error?: string;
   errorCode?: string;
   status?: number;
+}
+
+/**
+ * Tokens this isolate holds (per cache key), and refreshes in flight: routes
+ * sending in parallel share one token request and one KV write instead of
+ * each fetching and storing its own.
+ */
+const heldTokens = new Map<string, { token: string; until: number }>();
+const refreshing = new Map<string, Flight<TokenResult>>();
+const failedTokens = new Map<string, { result: TokenResult; until: number }>();
+/** Tokens Feishu refused (bounded): never taken from KV again. */
+const rejected = new Set<string>();
+/** Refused tokens whose KV copy this isolate removed (or is removing). */
+const cleared = new Set<string>();
+
+/**
+ * A rejected token is dropped from the cache, so the retry fetches a new one.
+ * From memory every time; from KV once per isolate (every target refused
+ * with it would otherwise delete the same key again) — tried again by the
+ * next refusal when that delete fails — and never a newer token another
+ * request stored meanwhile.
+ */
+export async function forgetRejectedToken(
+  result: SendResult,
+  env: Env,
+  token: string,
+): Promise<SendResult> {
+  if (result.errorCode !== "FEISHU_TOKEN") return result;
+  const key = tokenKey(env);
+  if (heldTokens.get(key)?.token === token) heldTokens.delete(key);
+  if (!rejected.has(token)) {
+    if (rejected.size >= 100) {
+      rejected.clear();
+      cleared.clear();
+    }
+    rejected.add(token);
+  }
+  if (!cleared.has(token)) {
+    cleared.add(token);
+    try {
+      if ((await env.KV.get(key)) === token) await env.KV.delete(key);
+    } catch {
+      cleared.delete(token);
+    }
+  }
+  return result;
 }
 
 export async function getTenantAccessToken(env: Env): Promise<TokenResult> {
@@ -166,8 +228,39 @@ export async function getTenantAccessToken(env: Env): Promise<TokenResult> {
     };
   }
 
-  const cached = await env.KV.get(TOKEN_KEY);
-  if (cached) return { ok: true, token: cached };
+  const key = tokenKey(env);
+  const held = heldTokens.get(key);
+  if (held && Date.now() < held.until) return { ok: true, token: held.token };
+  const failed = failedTokens.get(key);
+  if (failed && Date.now() < failed.until) return failed.result;
+  return sharedFlight(
+    refreshing,
+    key,
+    async () => {
+      const result = await fetchTenantAccessToken(env, appId, appSecret);
+      if (result.ok) failedTokens.delete(key);
+      else failedTokens.set(key, { result, until: Date.now() + FAILED_TOKEN_MS });
+      return result;
+    },
+    REQUEST_TIMEOUT_MS + 5_000,
+  );
+}
+
+async function fetchTenantAccessToken(
+  env: Env,
+  appId: string,
+  appSecret: string,
+): Promise<TokenResult> {
+  const key = tokenKey(env);
+  const cached = await env.KV.get(key);
+  // A copy Feishu already refused (its KV delete failed or has not spread
+  // yet) is not used again: a new token is requested instead.
+  if (cached && !rejected.has(cached)) {
+    // Held a few minutes here: KV is read again now and then, so a token
+    // another isolate replaced is picked up.
+    heldTokens.set(key, { token: cached, until: Date.now() + HELD_TOKEN_MS });
+    return { ok: true, token: cached };
+  }
 
   const url = `${FEISHU_API}/open-apis/auth/v3/tenant_access_token/internal`;
   try {
@@ -187,8 +280,24 @@ export async function getTenantAccessToken(env: Env): Promise<TokenResult> {
       const err = data?.msg ?? `HTTP ${res.status}`;
       return { ok: false, error: err, errorCode: "FEISHU_TOKEN", status: res.status };
     }
-    const ttl = Math.max(60, (data.expire ?? 7200) - 60);
-    await env.KV.put(TOKEN_KEY, data.tenant_access_token, { expirationTtl: ttl });
+    // Kept in KV until a held copy (read from KV just before it expires
+    // there, then held HELD_TOKEN_MS) still ends ahead of the token itself.
+    const ttl = Math.max(60, (data.expire ?? 7200) - 60 - HELD_TOKEN_MS / 1000);
+    heldTokens.set(key, {
+      token: data.tenant_access_token,
+      until: Date.now() + Math.min(HELD_TOKEN_MS, ttl * 1000),
+    });
+    // Shared with other isolates when it can be: a failed KV write (say, the
+    // daily write quota spent) never throws away a valid token — it is then
+    // held here until it nears expiry, instead of being fetched (and its
+    // write retried) again every few minutes.
+    const token = data.tenant_access_token;
+    // Feishu handing out a token refused before means it is valid after all.
+    rejected.delete(token);
+    cleared.delete(token);
+    await env.KV.put(key, token, { expirationTtl: ttl }).catch(() => {
+      heldTokens.set(key, { token, until: Date.now() + ttl * 1000 });
+    });
     return { ok: true, token: data.tenant_access_token };
   } catch (err) {
     return {
