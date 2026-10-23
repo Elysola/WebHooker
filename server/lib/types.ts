@@ -338,6 +338,11 @@ export interface NeutralMessage {
    * the route's `discordRoleIds`). Only used by the Discord driver.
    */
   mentionRoleIds?: string[];
+  /**
+   * False when the group turned emoji off: drivers must not add decorative
+   * emoji of their own (e.g. Telegram's author marker). Defaults to true.
+   */
+  emoji?: boolean;
 }
 
 export interface FormattedMessage {

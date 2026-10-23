@@ -106,7 +106,7 @@ export function renderNeutralMessage(message: NeutralMessage): string {
   if (message.author) {
     const name = mdToHtml(message.author.name);
     const author = message.author.url ? `<a href="${esc(message.author.url)}">${name}</a>` : name;
-    parts.push(`👤 ${author}`);
+    parts.push(message.emoji === false ? author : `👤 ${author}`);
   }
 
   if (message.description) {
