@@ -10,6 +10,8 @@ export function useFragmentsApi() {
   const shownGroupId = ref<string | null>(null);
   /** Group whose fragments were last loaded (or saved) successfully. */
   const loadedGroupId = ref<string | null>(null);
+  /** Server revision of the shown fragments, sent back to detect concurrent edits. */
+  let revision: string | undefined;
   // Bumped by every load/save, so only the latest request may land.
   let request = 0;
 
@@ -33,17 +35,19 @@ export function useFragmentsApi() {
     if (shownGroupId.value !== groupId) {
       fragments.value = [];
       loadedGroupId.value = null;
+      revision = undefined;
     }
     shownGroupId.value = groupId;
     loading.value = true;
     error.value = "";
     needLogin.value = false;
     try {
-      const data = await apiFetch<{ fragments?: NamedFragment[] }>(
+      const data = await apiFetch<{ fragments?: NamedFragment[]; revision?: string }>(
         `/admin/api/groups/${encodeURIComponent(groupId)}/fragments`,
       );
       if (mine !== request) return;
       fragments.value = data.fragments ?? [];
+      revision = data.revision;
       loadedGroupId.value = groupId;
     } catch (err) {
       if (mine === request && !needLogin.value)
@@ -55,11 +59,25 @@ export function useFragmentsApi() {
 
   async function save(groupId: string, next: NamedFragment[]): Promise<void> {
     saving.value = true;
+    let data: { fragments?: NamedFragment[]; revision?: string };
     try {
-      await apiFetch(`/admin/api/groups/${encodeURIComponent(groupId)}/fragments`, {
-        method: "PUT",
-        body: JSON.stringify({ fragments: next }),
-      });
+      data = await apiFetch<{ fragments?: NamedFragment[]; revision?: string }>(
+        `/admin/api/groups/${encodeURIComponent(groupId)}/fragments`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            fragments: next,
+            revision: loadedGroupId.value === groupId ? revision : undefined,
+          }),
+        },
+      );
+    } catch (err) {
+      // Changed elsewhere meanwhile: reload so the next write builds on it.
+      if (isConflict(err) && shownGroupId.value === groupId) {
+        saving.value = false;
+        void load(groupId);
+      }
+      throw err;
     } finally {
       saving.value = false;
     }
@@ -67,7 +85,8 @@ export function useFragmentsApi() {
     request++;
     loading.value = false;
     error.value = "";
-    fragments.value = next;
+    fragments.value = data.fragments ?? next;
+    revision = data.revision;
     loadedGroupId.value = groupId;
   }
 
