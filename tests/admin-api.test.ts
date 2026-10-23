@@ -9,7 +9,7 @@ import { createAdminSession, adminCookie } from "../server/lib/web/session";
 import { loadGroups, invalidateGroupsCache } from "../server/lib/web/groups";
 import { loadRoutes } from "../server/lib/config";
 import { createInvite, listInvites } from "../server/lib/web/invites";
-import { getTenantSecret, setTenantSecret } from "../server/lib/web/tenants";
+import { getTenantSecret } from "../server/lib/web/tenants";
 import { makeEvent, responseStatus } from "./helpers";
 import type { Env, Route } from "../server/lib/types";
 
@@ -85,8 +85,9 @@ describe("admin handlers (h3)", () => {
         },
       ] as Route[]),
     );
-    await setTenantSecret(kv, "old-team");
-    const originalSecret = (await getTenantSecret(kv, "old-team"))!;
+    // A secret stored before group instances existed (keyed by group id).
+    const originalSecret = "legacy-secret";
+    await kv.put("tenant:old-team", originalSecret);
     await createInvite(kv, {
       groupId: "old-team",
       role: "viewer",
@@ -114,8 +115,8 @@ describe("admin handlers (h3)", () => {
     const routes = await loadRoutes(kv);
     expect(routes[0]!.groupId).toBe("new-team");
 
-    expect(await getTenantSecret(kv, "new-team")).toBe(originalSecret);
-    expect(await getTenantSecret(kv, "old-team")).toBeNull();
+    // The secret follows the group (it is keyed by the group's instance).
+    expect(await getTenantSecret(kv, groups[0]!)).toBe(originalSecret);
 
     const invites = await listInvites(kv, "new-team");
     expect(invites).toHaveLength(1);

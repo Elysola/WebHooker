@@ -1,5 +1,13 @@
 import type { FilterNode } from "./types";
 import { log } from "./lib/log";
+import { canUseD1 } from "./storage/d1";
+import {
+  ConfigConflictError,
+  groupVersion,
+  groupVersionBump,
+  groupVersionGuard,
+  runGuarded,
+} from "./storage/config-store";
 
 export interface NamedFragment {
   id: string;
@@ -15,59 +23,83 @@ interface D1FragmentRow {
   node: string;
 }
 
-export async function loadFragments(db: D1Database): Promise<NamedFragment[]> {
-  try {
-    const stmt = db.prepare("SELECT id, group_id, name, node FROM d1_fragments ORDER BY id");
-    if (typeof stmt.all !== "function") return [];
-    const { results } = await stmt.all<D1FragmentRow>();
-    if (!results || results.length === 0) return [];
-    return results.map((r) => ({
-      id: r.id,
-      groupId: r.group_id || undefined,
-      name: r.name,
-      node: JSON.parse(r.node) as FilterNode,
-    }));
-  } catch (err) {
-    log.warn({ err }, "Failed to load fragments from D1");
-    return [];
-  }
+/**
+ * Named filter fragments, optionally of one group. Without a usable D1
+ * binding there are none; a D1 error propagates, because callers replace a
+ * group's whole list and must never build that list from a failed read. An
+ * unreadable row is skipped (logged) — or, with `strict`, an error: a write
+ * replacing the group's list must never silently delete a row nobody saw.
+ */
+export async function loadFragments(
+  db: D1Database,
+  groupId?: string,
+  strict = false,
+): Promise<NamedFragment[]> {
+  if (!canUseD1(db)) return [];
+  const stmt =
+    groupId === undefined
+      ? db.prepare("SELECT id, group_id, name, node FROM d1_fragments ORDER BY id")
+      : db
+          .prepare(
+            "SELECT id, group_id, name, node FROM d1_fragments WHERE group_id = ? ORDER BY id",
+          )
+          .bind(groupId);
+  const { results } = await stmt.all<D1FragmentRow>();
+  return (results ?? []).flatMap((r) => {
+    try {
+      return [
+        {
+          id: r.id,
+          groupId: r.group_id || undefined,
+          name: r.name,
+          node: JSON.parse(r.node) as FilterNode,
+        },
+      ];
+    } catch (err) {
+      if (strict) {
+        throw new Error(`filter fragment "${r.id}" is unreadable; repair the row before saving`);
+      }
+      log.warn({ err, id: r.id }, "Ignoring malformed filter fragment");
+      return [];
+    }
+  });
 }
 
-export async function saveFragments(db: D1Database, fragments: NamedFragment[]): Promise<void> {
+/**
+ * Replace one group's fragments in a single transaction; other groups are
+ * untouched. `expect` sees the stored fragments first and may throw; the write
+ * then commits only if nothing changed the group in between (version guard).
+ */
+export async function saveGroupFragments(
+  db: D1Database,
+  groupId: string,
+  fragments: NamedFragment[],
+  opts?: {
+    expect?: (current: NamedFragment[]) => void | Promise<void>;
+    /** Guard statements committed first in the write (see `GuardedWrite.guards`). */
+    guards?: (db: D1Database) => D1PreparedStatement[];
+  },
+): Promise<NamedFragment[]> {
+  if (!canUseD1(db)) throw new Error("Filter fragments require the D1 binding");
+  const version = await groupVersion(db, groupId);
+  if (version == null) throw new ConfigConflictError(`group "${groupId}" does not exist`);
+  // Loaded strictly even without `expect`: an unreadable row aborts here.
+  const stored = await loadFragments(db, groupId, true);
+  await opts?.expect?.(stored);
   const now = Date.now();
-
-  // Load existing fragments to determine what to delete
-  const existing = await loadFragments(db);
-  const existingKeys = new Set(existing.map((f) => `${f.id}:${f.groupId ?? ""}`));
-  const newKeys = new Set(fragments.map((f) => `${f.id}:${f.groupId ?? ""}`));
-
-  const statements: D1PreparedStatement[] = [];
-
-  // Delete fragments that are no longer present
-  for (const key of existingKeys) {
-    if (!newKeys.has(key)) {
-      const [id, groupId] = key.split(":");
-      statements.push(
-        db.prepare("DELETE FROM d1_fragments WHERE id = ? AND group_id = ?").bind(id, groupId),
-      );
-    }
-  }
-
-  // Upsert all fragments
-  for (const f of fragments) {
-    statements.push(
+  await runGuarded(db, [
+    groupVersionGuard(db, groupId, version),
+    ...(opts?.guards?.(db) ?? []),
+    groupVersionBump(db, groupId),
+    db.prepare("DELETE FROM d1_fragments WHERE group_id = ?").bind(groupId),
+    ...fragments.map((f) =>
       db
         .prepare(
           `INSERT INTO d1_fragments (id, group_id, name, node, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 1, ?, ?)
-           ON CONFLICT(id, group_id) DO UPDATE SET
-             name = excluded.name,
-             node = excluded.node,
-             updated_at = excluded.updated_at`,
+           VALUES (?, ?, ?, ?, 1, ?, ?)`,
         )
-        .bind(f.id, f.groupId ?? "", f.name, JSON.stringify(f.node), now, now),
-    );
-  }
-
-  await db.batch(statements);
+        .bind(f.id, groupId, f.name, JSON.stringify(f.node), now, now),
+    ),
+  ]);
+  return loadFragments(db, groupId);
 }

@@ -43,7 +43,10 @@ export async function processWebhook(
     if (!groups.some((g) => g.id === tenantId)) {
       return { status: 404, body: { error: "Group not found" } };
     }
-    const secret = await getTenantSecret(env.KV, tenantId);
+    const secret = await getTenantSecret(
+      env.KV,
+      groups.find((g) => g.id === tenantId)!,
+    );
     if (!secret) {
       return { status: 404, body: { error: "Webhook disabled for this group" } };
     }

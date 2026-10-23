@@ -9,6 +9,9 @@ import {
   adminApiMe,
   adminApiGroupsGet,
   adminApiGroupsPut,
+  adminGroupCreate,
+  adminGroupUpdate,
+  adminGroupDelete,
   adminApiRoutesGet,
   adminApiRoutesPut,
   adminApiLogs,
@@ -40,6 +43,11 @@ export default defineEventHandler((event) => {
   if (seg[0] === "groups" && seg.length === 1) {
     if (method === "GET") return adminApiGroupsGet(event);
     if (method === "PUT") return adminApiGroupsPut(event);
+    if (method === "POST") return adminGroupCreate(event);
+  }
+  if (seg[0] === "groups" && seg.length === 2) {
+    if (method === "PUT") return adminGroupUpdate(event, seg[1]!);
+    if (method === "DELETE") return adminGroupDelete(event, seg[1]!);
   }
   if (seg[0] === "routes" && seg.length === 1) {
     if (method === "GET") return adminApiRoutesGet(event);
