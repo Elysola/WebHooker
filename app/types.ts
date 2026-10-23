@@ -85,6 +85,12 @@ export interface Group {
   owners?: string[];
   providers?: ("github" | "gitea" | "gitlab")[];
   installationId?: number;
+  /** Self-service group: only its own webhook ingress dispatches to it (super-only). */
+  isolated?: boolean;
+  /** Immutable server-assigned group identity (kept across renames). */
+  instance?: string;
+  /** Server revision of the stored group; sent back on update to detect stale edits. */
+  revision?: string;
   emoji?: boolean;
   forgeSources?: ForgeSource[];
   lang?: string;
