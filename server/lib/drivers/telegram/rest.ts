@@ -76,10 +76,25 @@ async function post(
         };
       }
 
+      // Accepted, but the answer is unreadable (cut off, timed out): the
+      // message may well exist, and Telegram has no idempotency key, so a
+      // retry could post it twice — a visible failure, not retried (and not
+      // a success without a message id, which an update chain would lose).
+      if (data?.ok !== true) {
+        log.error({ status: res.status, chatId }, "Unreadable Telegram response");
+        return {
+          ok: false,
+          error: "Telegram accepted the request, but its answer could not be read",
+          errorCode: "TELEGRAM_UNCERTAIN",
+          status: res.status,
+          attempts: attempt + 1,
+        };
+      }
+
       return {
         ok: true,
         status: res.status,
-        messageId: data?.result?.message_id != null ? String(data.result.message_id) : undefined,
+        messageId: data.result?.message_id != null ? String(data.result.message_id) : undefined,
         attempts: attempt + 1,
       };
     } catch (err) {
