@@ -117,15 +117,85 @@ function codePoint(value: number, original: string): string {
   return String.fromCodePoint(value);
 }
 
+/**
+ * Markdown code and autolinks, which are text as written (see `htmlToText`):
+ * - a fenced block — ``` or ~~~ (3 or more) at a line start, closed by a
+ *   fence of that same character, at least as long, or by the end of the text;
+ * - an indented code block — lines indented by 4 spaces or a tab;
+ * - an inline span — a run of backticks closed by a run of the same length
+ *   within 1000 characters (a shorter or longer run inside is content),
+ *   possibly across lines — bounded, so unmatched runs cost little;
+ * - an autolink — `<scheme:…>` or an e-mail address `<name@host>`.
+ */
+const MARKDOWN_VERBATIM =
+  /^ {0,3}(?<fence>(?<fc>[`~])\k<fc>{2,})[^\n]*(?:\n[\s\S]*?(?:\n {0,3}\k<fence>\k<fc>*[ \t]*(?=\n|$(?![\s\S]))|$(?![\s\S]))|$(?![\s\S]))|^(?: {4}|\t)[^\n]*(?:\n(?: {4}|\t)[^\n]*)*|(?<!`)(?<tick>`+)(?!`)[\s\S]{0,1000}?(?<!`)\k<tick>(?!`)|<[a-z][a-z0-9+.-]*:[^\s<>]*>|<[^\s<>@]+@[^\s<>@]+>/gim;
+
+/**
+ * Most of a body cleaned: callers keep a few hundred characters of the
+ * result, and an unbounded body (megabytes of markup) must not cost an
+ * unbounded amount of CPU on every delivery and retry.
+ */
+const MAX_HTML_INPUT = 10_000;
+
+/**
+ * Recent results: one event's body is summarized for every route it matches
+ * (each route formats its own message), so the same text is cleaned once.
+ */
+const htmlToTextCache = new Map<string, string>();
+const HTML_TO_TEXT_CACHE_SIZE = 32;
+
 export function htmlToText(input: string): string {
   if (!input) return "";
+  const cached = htmlToTextCache.get(input);
+  if (cached !== undefined) return cached;
+  const result = htmlToTextUncached(input);
+  if (htmlToTextCache.size >= HTML_TO_TEXT_CACHE_SIZE) {
+    htmlToTextCache.delete(htmlToTextCache.keys().next().value!);
+  }
+  htmlToTextCache.set(input, result);
+  return result;
+}
+
+function htmlToTextUncached(input: string): string {
+  const text = input.length > MAX_HTML_INPUT ? input.slice(0, MAX_HTML_INPUT) : input;
+  // Markdown code and autolinks are text as written: `<T>` or
+  // `<MyComponent />` there is content, not HTML to strip, an entity there is
+  // literal, and its spacing (a leading indent included) is its own. Only the
+  // text around them is cleaned and trimmed.
+  const parts: Array<{ text: string; verbatim: boolean }> = [];
+  let last = 0;
+  for (const m of text.matchAll(MARKDOWN_VERBATIM)) {
+    parts.push({ text: clean(text.slice(last, m.index)), verbatim: false });
+    parts.push({ text: m[0], verbatim: true });
+    last = m.index + m[0].length;
+  }
+  parts.push({ text: clean(text.slice(last)), verbatim: false });
+  const first = parts.findIndex((p) => p.text.trim() !== "");
+  if (first < 0) return "";
+  const kept = parts.slice(first);
+  while (kept.length && kept[kept.length - 1]!.text.trim() === "") kept.pop();
+  if (!kept[0]!.verbatim) kept[0]!.text = kept[0]!.text.trimStart();
+  const end = kept[kept.length - 1]!;
+  if (!end.verbatim) end.text = end.text.trimEnd();
+  return kept.map((p) => p.text).join("");
+}
+
+function clean(text: string): string {
+  return stripHtml(text)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+function stripHtml(input: string): string {
+  // A tag never spans another `<`: each `<` is looked at once, so text full
+  // of unclosed `<` stays linear.
   let out = input
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<table[^>]*>/gi, "\n")
+    .replace(/<table[^<>]*>/gi, "\n")
     .replace(/<\/(p|div|tr|h[1-6]|ul|ol|table|blockquote)>/gi, "\n")
     .replace(/<\/t[dh]>/gi, "  ")
-    .replace(/<li[^>]*>/gi, "\n• ")
-    .replace(/<[^>]+>/g, "");
+    .replace(/<li[^<>]*>/gi, "\n• ")
+    .replace(/<[^<>]+>/g, "");
   out = out
     .replace(/&nbsp;/gi, " ")
     .replace(/&lt;/gi, "<")
@@ -135,10 +205,6 @@ export function htmlToText(input: string): string {
     .replace(/&#x([0-9a-f]+);/gi, (m, hex: string) => codePoint(parseInt(hex, 16), m))
     .replace(/&#(\d+);/g, (m, dec: string) => codePoint(Number(dec), m))
     .replace(/&amp;/gi, "&");
-  out = out
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
   return out;
 }
 
