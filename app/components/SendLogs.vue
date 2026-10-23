@@ -146,24 +146,33 @@ function onGroupFilter(value: string): void {
   emit("filter");
 }
 
+/** Bumped by every open/close: only the latest detail request may land. */
+let detailRequest = 0;
+
 async function openDetail(l: SendRecord): Promise<void> {
   if (l.id == null) return;
+  const mine = ++detailRequest;
   detailOpen.value = true;
   detail.value = null;
   detailError.value = "";
   detailLoading.value = true;
   try {
-    detail.value = await loadById(l.id);
+    const entry = await loadById(l.id);
+    if (mine === detailRequest) detail.value = entry;
   } catch (err) {
-    detailError.value = err instanceof Error ? err.message : String(err);
+    if (mine === detailRequest) {
+      detailError.value = err instanceof Error ? err.message : String(err);
+    }
   } finally {
-    detailLoading.value = false;
+    if (mine === detailRequest) detailLoading.value = false;
   }
 }
 
 function closeDetail(): void {
+  detailRequest++;
   detailOpen.value = false;
   detail.value = null;
+  detailLoading.value = false;
 }
 
 function onDetailOpenChange(open: boolean): void {
