@@ -46,11 +46,12 @@
           type="text"
           size="sm"
           :placeholder="t('members.addPlaceholder')"
+          :disabled="saving"
           @keydown.enter.prevent="addMember"
         />
       </div>
       <div class="member-role">
-        <RcSelect v-model="newRole" :options="roleOptions" />
+        <RcSelect v-model="newRole" :options="roleOptions" :disabled="saving" />
       </div>
       <RcButton type="button" size="sm" class="h-9" :disabled="saving" @click="addMember">
         {{ t("members.addBtn") }}
@@ -153,6 +154,9 @@ function ownerCount(): number {
 }
 
 function onRoleChange(m: GroupMember, role: string): void {
+  // One save at a time: a change made meanwhile would be overwritten by the
+  // first save's result (and the second save refused).
+  if (props.saving) return;
   const nextRole = role as GroupRole;
   if (nextRole === "viewer" && m.role === "owner" && ownerCount() === 1) {
     formError.value = t("members.errLastOwner");
@@ -163,6 +167,7 @@ function onRoleChange(m: GroupMember, role: string): void {
 }
 
 function addMember(): void {
+  if (props.saving) return;
   const login = newLogin.value.trim();
   if (!login) return;
   if (members.value.some((m) => m.login.toLowerCase() === login.toLowerCase())) {
@@ -184,7 +189,7 @@ async function removeMember(m: GroupMember): Promise<void> {
     title: t("confirm.removeMember", { name: m.login }),
     confirmText: t("members.remove"),
   });
-  if (!confirmed) return;
+  if (!confirmed || props.saving) return;
   members.value = members.value.filter((x) => x !== m);
   emitSave();
 }
