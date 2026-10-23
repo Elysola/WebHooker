@@ -327,6 +327,13 @@ export interface NeutralMessage {
    */
   legacyUpdateKey?: string;
   /**
+   * Stable identity of this message for one target, the same in every
+   * attempt of a delivery (set by dispatch from delivery × route × target).
+   * Platforms with request idempotency (Discord `nonce`, Feishu `uuid`) use
+   * it, so a retry after a lost response never posts the message twice.
+   */
+  sendKey?: string;
+  /**
    * Discord role ids to mention in the message content (set by dispatch from
    * the route's `discordRoleIds`). Only used by the Discord driver.
    */

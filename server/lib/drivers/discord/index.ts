@@ -12,7 +12,13 @@ export class DiscordDriver implements PlatformDriver {
       return { ok: false, error: "target.channelId is required", errorCode: "NO_TARGET" };
     }
     const token = env.DISCORD_TOKEN ?? "";
-    return sendMessage(token, channelId, renderNeutralMessage(message), target.threadId);
+    return sendMessage(
+      token,
+      channelId,
+      renderNeutralMessage(message),
+      target.threadId,
+      message.sendKey,
+    );
   }
 
   async edit(

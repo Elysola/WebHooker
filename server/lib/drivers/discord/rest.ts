@@ -81,15 +81,11 @@ async function request(
         };
       }
 
-      let messageId: string | undefined;
-      try {
-        const data = (await res.json()) as DiscordMessage;
-        messageId = data.id;
-      } catch {
-        // ignore malformed success body
-      }
-
-      return { ok: true, status: res.status, messageId, attempts: attempt + 1 };
+      // A success whose body cannot be read (cut off, timed out) is not known
+      // to have happened: tried again — a create carries its nonce, so it is
+      // never doubled.
+      const data = (await res.json()) as DiscordMessage | null;
+      return { ok: true, status: res.status, messageId: data?.id, attempts: attempt + 1 };
     } catch (err) {
       log.error({ err, attempt, channelId }, "Failed to send message");
       if (attempt === 2)
@@ -106,11 +102,19 @@ export async function sendMessage(
   channelId: string,
   message: unknown,
   threadId?: string,
+  sendKey?: string,
 ): Promise<SendResult> {
   // Ids are path segments: encoded, so no stored value can address another
   // resource (`x/../123` is never the channel `123`).
   const url = `${DISCORD_API}/channels/${encodeURIComponent(threadId || channelId)}/messages`;
-  return request(url, "POST", token, message, channelId);
+  // One nonce for every attempt of this send — and, given a `sendKey`, for
+  // every attempt of the delivery: when a create went through but its
+  // response was lost, Discord answers the retry with that same message
+  // instead of posting a second one (`enforce_nonce`, a few minutes' window).
+  const nonce = (sendKey ?? crypto.randomUUID().replace(/-/g, "")).slice(0, 25);
+  const body =
+    message && typeof message === "object" ? { ...message, nonce, enforce_nonce: true } : message;
+  return request(url, "POST", token, body, channelId);
 }
 
 export async function editMessage(
