@@ -99,7 +99,8 @@ export async function bearerUserId(event: H3Event): Promise<string> {
   const auth = getHeader(event, "authorization");
   if (!auth?.startsWith("Bearer "))
     throw createError({ statusCode: 401, statusMessage: "Missing authorization" });
-  const userId = await findUserIdByToken(env.KV, auth.slice(7));
+  // Resolves only the user's *current* token: a rotated or revoked one fails.
+  const userId = await findUserIdByToken(env.KV, auth.slice(7), env.DB);
   if (!userId) throw createError({ statusCode: 401, statusMessage: "Invalid or expired token" });
   return userId;
 }

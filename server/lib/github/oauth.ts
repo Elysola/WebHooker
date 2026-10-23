@@ -1,5 +1,5 @@
 import { Octokit } from "octokit";
-import { saveToken, getToken } from "./store";
+import { saveToken, getToken, type TokenSource } from "./store";
 
 export function getOAuthURL(clientId: string, state: string): string {
   // `read:org` lets the install flow check organization admin rights.
@@ -126,6 +126,7 @@ export async function handleOAuthCallback(
   code: string,
   _state: string,
   kv: KVNamespace,
+  db?: D1Database,
 ): Promise<{ userId: string; login: string } | null> {
   const res = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -154,12 +155,12 @@ export async function handleOAuthCallback(
   const octokit = new Octokit({ auth: data.access_token });
   const { data: user } = await octokit.rest.users.getAuthenticated();
 
-  await saveToken(kv, user.id.toString(), data.access_token, 3600 * 10);
+  await saveToken(kv, user.id.toString(), data.access_token, 3600 * 10, db);
 
   return { userId: user.id.toString(), login: user.login };
 }
 
-export async function getUserOctokit(userId: string, kv: KVNamespace): Promise<Octokit | null> {
+export async function getUserOctokit(userId: string, kv: TokenSource): Promise<Octokit | null> {
   const token = await getToken(kv, userId);
   if (!token) return null;
   return new Octokit({ auth: token });
@@ -213,7 +214,7 @@ async function requireOctokit(kv: KVNamespace, githubUserId: string): Promise<Oc
  * so the comment shows up under their own identity instead of the bot.
  */
 export async function commentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -237,7 +238,7 @@ export async function commentAsUser(
 
 /** Fetch a single issue comment's current body (used to prefill the edit modal). */
 export async function getCommentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -254,7 +255,7 @@ export async function getCommentAsUser(
 
 /** Edit an existing issue/PR comment. GitHub enforces permission (403 if not allowed). */
 export async function editCommentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -277,7 +278,7 @@ export async function editCommentAsUser(
 
 /** Delete an existing issue/PR comment. GitHub enforces permission (403 if not allowed). */
 export async function deleteCommentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -293,7 +294,7 @@ export async function deleteCommentAsUser(
 
 /** Merge a pull request as the linked GitHub user. GitHub enforces permission (403 if not allowed). */
 export async function mergePullRequestAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -315,7 +316,7 @@ export async function mergePullRequestAsUser(
 
 /** Close a pull request as the linked GitHub user. GitHub enforces permission (403 if not allowed). */
 export async function closePullRequestAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
