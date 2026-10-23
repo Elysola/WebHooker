@@ -7,6 +7,12 @@ interface DiscordMessage {
   id?: string;
 }
 
+/**
+ * Longest a single API call may take. Bounded, so a message edit always ends
+ * well within the update-chain lock it runs under (see `deliverUpdate`).
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request(
   url: string,
   method: string,
@@ -23,6 +29,7 @@ async function request(
           "Content-Type": "application/json",
         },
         body: JSON.stringify(message),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (res.status === 429) {
