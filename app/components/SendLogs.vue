@@ -6,7 +6,7 @@
         <label class="filter-label">{{ t("logs.filterGroup") }}</label>
         <RcSelect
           class="filter-select"
-          :model-value="selectedGroupId || 'all'"
+          :model-value="selectedGroupId || '*'"
           :options="groupOptions"
           :disabled="loading"
           @update:model-value="onGroupFilter"
@@ -101,7 +101,7 @@ const detailLoading = ref(false);
 const detailError = ref("");
 
 const groupOptions = computed(() => [
-  { label: t("logs.allGroups"), value: "all" },
+  { label: t("logs.allGroups"), value: "*" }, // "*" is no group id: one named "all" stays selectable
   ...props.groups.map((g) => ({ label: g.name || g.id, value: g.id })),
 ]);
 
@@ -142,7 +142,7 @@ function refresh(): void {
 }
 
 function onGroupFilter(value: string): void {
-  emit("update:selectedGroupId", value === "all" ? "" : value);
+  emit("update:selectedGroupId", value === "*" ? "" : value);
   emit("filter");
 }
 
