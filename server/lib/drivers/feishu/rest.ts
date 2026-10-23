@@ -79,6 +79,12 @@ async function feishuRequest(
       }
 
       const data = (await res.json().catch(() => null)) as FeishuResponse | null;
+      // A 200 whose body cannot be read (or carries no result code) is not
+      // known to have succeeded: tried again (the request's uuid keeps a
+      // send from doubling).
+      if (res.ok && (!data || typeof data.code !== "number")) {
+        throw new Error("Feishu answered without a result code");
+      }
 
       if (!res.ok) {
         lastError = data?.msg ?? data?.error?.message ?? `HTTP ${res.status}`;
@@ -197,12 +203,17 @@ export async function sendMessage(
   token: string,
   chatId: string,
   content: Record<string, unknown>,
+  sendKey?: string,
 ): Promise<SendResult> {
   const url = `${FEISHU_API}/open-apis/im/v1/messages?receive_id_type=chat_id`;
+  // One `uuid` for every attempt of this send (of the delivery, given a
+  // `sendKey`): Feishu delivers at most one message per uuid within an hour,
+  // so a retry after a lost response never posts a duplicate.
   const body: Record<string, unknown> = {
     receive_id: chatId,
     msg_type: "interactive",
     content: JSON.stringify(content),
+    uuid: (sendKey ?? crypto.randomUUID()).slice(0, 50),
   };
   return feishuRequest(url, "POST", token, body, chatId);
 }
@@ -223,6 +234,7 @@ export async function sendText(token: string, chatId: string, text: string): Pro
     receive_id: chatId,
     msg_type: "text",
     content: JSON.stringify({ text }),
+    uuid: crypto.randomUUID(),
   };
   return feishuRequest(url, "POST", token, body, chatId);
 }
