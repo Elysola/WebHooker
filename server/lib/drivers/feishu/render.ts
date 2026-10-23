@@ -26,8 +26,18 @@ function colorToTemplate(color?: number): FeishuTemplate {
   return "blue";
 }
 
+/**
+ * Text from the forge (titles, bodies, names) is anyone's to write: an
+ * `<at id=all></at>` in an issue title would make the bot notify the whole
+ * chat. The card never mentions anyone itself, so every `<at` tag is broken
+ * up (a zero-width space after `<`) and shows as text.
+ */
+function noMentions(content: string): string {
+  return content.replace(/<(\/?)(at)\b/gi, "<\u200b$1$2");
+}
+
 function mdText(content: string): { tag: "lark_md"; content: string } {
-  return { tag: "lark_md", content: cap(content, MAX_MARKDOWN) };
+  return { tag: "lark_md", content: cap(noMentions(content), MAX_MARKDOWN) };
 }
 
 function divMarkdown(content: string): { tag: "div"; text: { tag: "lark_md"; content: string } } {
@@ -92,7 +102,7 @@ export function renderNeutralMessage(message: NeutralMessage): Record<string, un
     if (elements.length) elements.push({ tag: "hr" });
     elements.push({
       tag: "note",
-      elements: [{ tag: "lark_md", content: cap(meta.join(" · "), MAX_NOTE) }],
+      elements: [{ tag: "lark_md", content: cap(noMentions(meta.join(" · ")), MAX_NOTE) }],
     });
   }
 
