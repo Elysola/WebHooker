@@ -2,7 +2,8 @@ import { Octokit } from "octokit";
 import { saveToken, getToken } from "./store";
 
 export function getOAuthURL(clientId: string, state: string): string {
-  return `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&state=${state}`;
+  // `read:org` lets the install flow check organization admin rights.
+  return `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=${encodeURIComponent("repo read:org")}&state=${state}`;
 }
 
 function b64url(buf: ArrayBuffer | string): string {
@@ -40,31 +41,82 @@ export async function createAppJwt(appId: string, privateKey: string): Promise<s
   return `${data}.${b64url(sig)}`;
 }
 
+export interface InstallationAccount {
+  login: string;
+  id: number;
+  /** "User" or "Organization". */
+  type: string;
+}
+
+const API_HEADERS = {
+  Accept: "application/vnd.github+json",
+  "X-GitHub-Api-Version": "2022-11-28",
+  "User-Agent": "WebHooker",
+};
+
 /**
- * Look up the account (org/user login) that owns a GitHub App installation,
- * using an App JWT. Returns null when the App credentials are missing or the
- * lookup fails (the caller falls back to an anonymous installation group).
+ * Look up the account (org/user) that owns a GitHub App installation, using
+ * an App JWT. Returns null when the App credentials are missing or the lookup
+ * fails.
  */
+export async function getInstallationDetails(
+  appId: string,
+  privateKey: string,
+  installationId: number,
+): Promise<InstallationAccount | null> {
+  if (!appId || !privateKey) return null;
+  try {
+    const jwt = await createAppJwt(appId, privateKey);
+    const res = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+      headers: { ...API_HEADERS, Authorization: `Bearer ${jwt}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      account?: { login?: string; id?: number; type?: string };
+    };
+    if (!data.account?.login) return null;
+    // An account without an id can still be named, but never matches a user.
+    return { login: data.account.login, id: data.account.id ?? -1, type: data.account.type ?? "" };
+  } catch {
+    return null;
+  }
+}
+
+/** The login of the account owning an installation (null when unknown). */
 export async function getInstallationAccount(
   appId: string,
   privateKey: string,
   installationId: number,
 ): Promise<string | null> {
-  if (!appId || !privateKey) return null;
+  return (await getInstallationDetails(appId, privateKey, installationId))?.login ?? null;
+}
+
+/**
+ * Whether a GitHub user may administer an App installation. The Setup URL's
+ * `installation_id` is attacker-controlled, so binding it to a group requires
+ * proof from the user's own token: the user is the installation's account, or
+ * an active admin of its organization. Merely having access to it (being
+ * listed in `/user/installations` as a collaborator) is not enough.
+ */
+export async function userManagesInstallation(
+  token: string,
+  userId: string,
+  _installationId: number,
+  account: InstallationAccount | null,
+): Promise<boolean> {
+  const headers = { ...API_HEADERS, Authorization: `Bearer ${token}` };
   try {
-    const jwt = await createAppJwt(appId, privateKey);
-    const res = await fetch(`https://api.github.com/app/installations/${installationId}`, {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { account?: { login?: string } };
-    return data.account?.login ?? null;
+    if (!account) return false;
+    if (account.type === "User") return String(account.id) === userId;
+    const res = await fetch(
+      `https://api.github.com/user/memberships/orgs/${encodeURIComponent(account.login)}`,
+      { headers },
+    );
+    if (!res.ok) return false;
+    const membership = (await res.json()) as { state?: string; role?: string };
+    return membership.state === "active" && membership.role === "admin";
   } catch {
-    return null;
+    return false;
   }
 }
 
