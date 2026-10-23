@@ -163,7 +163,10 @@ export async function handleOAuthCallback(
 export async function getUserOctokit(userId: string, kv: TokenSource): Promise<Octokit | null> {
   const token = await getToken(kv, userId);
   if (!token) return null;
-  return new Octokit({ auth: token });
+  // No automatic retries: the user's actions (a comment, a merge) are not
+  // idempotent, and a retry after a lost response would act twice. A failure
+  // is reported to the user instead, who can try again knowingly.
+  return new Octokit({ auth: token, retry: { enabled: false }, throttle: { enabled: false } });
 }
 
 /**
@@ -203,8 +206,59 @@ export async function resolveGitHubUserId(token: string, login: string): Promise
   }
 }
 
-async function requireOctokit(kv: KVNamespace, githubUserId: string): Promise<Octokit> {
-  const octokit = await getUserOctokit(githubUserId, kv);
+/**
+ * A failure before anything was sent to GitHub (the user's token could not be
+ * read). Bot commands give such a command back for the platform to retry,
+ * instead of consuming it with an error reply.
+ */
+export class BeforeGitHubError extends Error {}
+
+/**
+ * Another run finished this command meanwhile (this one outlived its claim):
+ * nothing is written, and that run's "done" stays.
+ */
+export class CommandTakenError extends BeforeGitHubError {}
+
+/**
+ * GitHub refused the request (or none could be made for want of a token):
+ * nothing was done, so running the command again is safe. Anything else (a
+ * network failure, a 5xx) may have acted.
+ */
+export function githubRefused(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : "";
+  if (["GITHUB_TOKEN_EXPIRED", "GITHUB_FORBIDDEN", "GITHUB_NOT_FOUND"].includes(message)) {
+    return true;
+  }
+  const status = (err as { status?: unknown })?.status;
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
+ * `beforeWrite` runs once only the write itself is left (a bot records the
+ * command as done there, so a lost confirmation can never run the write
+ * again); its failure aborts with nothing done.
+ */
+export interface WriteHooks {
+  beforeWrite?: () => Promise<void>;
+}
+
+async function beforeWrite(hooks: WriteHooks | undefined): Promise<void> {
+  if (!hooks?.beforeWrite) return;
+  try {
+    await hooks.beforeWrite();
+  } catch (err) {
+    if (err instanceof BeforeGitHubError) throw err;
+    throw new BeforeGitHubError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function requireOctokit(kv: TokenSource, githubUserId: string): Promise<Octokit> {
+  let octokit: Octokit | null;
+  try {
+    octokit = await getUserOctokit(githubUserId, kv);
+  } catch (err) {
+    throw new BeforeGitHubError(err instanceof Error ? err.message : String(err));
+  }
   if (!octokit) throw new Error("GITHUB_TOKEN_EXPIRED");
   return octokit;
 }
@@ -220,17 +274,19 @@ export async function commentAsUser(
   repo: string,
   issueNumber: number,
   body: string,
+  hooks?: WriteHooks,
 ): Promise<{ htmlUrl: string; login: string }> {
   const octokit = await requireOctokit(kv, githubUserId);
+  await beforeWrite(hooks);
   try {
-    const { data: me } = await octokit.rest.users.getAuthenticated();
+    // The author comes with the created comment: no separate `/user` request.
     const res = await octokit.rest.issues.createComment({
       owner,
       repo,
       issue_number: issueNumber,
       body,
     });
-    return { htmlUrl: res.data.html_url, login: me.login };
+    return { htmlUrl: res.data.html_url, login: res.data.user?.login ?? "" };
   } catch (err) {
     throw mapGitHubError(err);
   }
@@ -300,8 +356,10 @@ export async function mergePullRequestAsUser(
   repo: string,
   pullNumber: number,
   method: "merge" | "squash" | "rebase" = "squash",
+  hooks?: WriteHooks,
 ): Promise<void> {
   const octokit = await requireOctokit(kv, githubUserId);
+  await beforeWrite(hooks);
   try {
     await octokit.rest.pulls.merge({
       owner,
@@ -321,8 +379,10 @@ export async function closePullRequestAsUser(
   owner: string,
   repo: string,
   pullNumber: number,
+  hooks?: WriteHooks,
 ): Promise<void> {
   const octokit = await requireOctokit(kv, githubUserId);
+  await beforeWrite(hooks);
   try {
     await octokit.rest.pulls.update({
       owner,
