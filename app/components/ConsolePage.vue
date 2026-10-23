@@ -968,6 +968,13 @@ async function onSave(route: Route): Promise<void> {
   try {
     let next: Route[];
     if (editing.value) {
+      // The route must still be the one the editor opened: a version changed
+      // by someone else meanwhile would otherwise be overwritten silently.
+      const latest = groupRoutes.value.find((r) => r.id === editing.value!.id);
+      if (!latest || JSON.stringify(latest) !== JSON.stringify(editing.value)) {
+        push(t("toast.routeChanged"), "bad");
+        return;
+      }
       next = groupRoutes.value.map((r) => (r.id === editing.value!.id ? route : r));
     } else {
       if (groupRoutes.value.some((r) => r.id === route.id)) {

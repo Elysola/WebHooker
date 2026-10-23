@@ -428,6 +428,8 @@ const en: Dict = {
   "toast.groupSaved": "Groups saved",
   "toast.groupDeleted": "Group deleted",
   "toast.routeIdExists": "Route ID already exists",
+  "toast.routeChanged":
+    "This route was changed by someone else since you opened it. Close the editor and open it again.",
   "toast.groupIdExists": "Group ID already exists",
   "toast.saveFailed": "Save failed: {msg}",
   "toast.deleteFailed": "Delete failed: {msg}",
@@ -870,6 +872,7 @@ const zh: Dict = {
   "toast.groupSaved": "分组已保存",
   "toast.groupDeleted": "分组已删除",
   "toast.routeIdExists": "路由 ID 已存在",
+  "toast.routeChanged": "该路由在你打开后已被他人修改。请关闭编辑器后重新打开。",
   "toast.groupIdExists": "分组 ID 已存在",
   "toast.saveFailed": "保存失败：{msg}",
   "toast.deleteFailed": "删除失败：{msg}",
