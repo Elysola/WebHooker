@@ -285,6 +285,48 @@ function matchFilter(filter: Filter, event: WebhookEvent, keywordBody?: string):
   return filter.exclude ? !matches : matches;
 }
 
+/**
+ * Whether a filter tree has the shape the evaluator assumes: every node is a
+ * leaf (`type`, no `all`/`any`/`not`) or exactly one combinator holding nodes
+ * of the same shape. A node mixing kinds (`{"all": 0, "any": [...]}`) passes
+ * a lenient schema but makes the evaluator throw.
+ */
+export function filterNodeWellFormed(node: unknown): boolean {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return false;
+  const n = node as Record<string, unknown>;
+  const kinds = (["all", "any", "not"] as const).filter((k) => k in n);
+  if (kinds.length > 1) return false;
+  const kind = kinds[0];
+  if (kind === "all" || kind === "any") {
+    const list = n[kind];
+    return Array.isArray(list) && list.every(filterNodeWellFormed);
+  }
+  if (kind === "not") return filterNodeWellFormed(n.not);
+  return typeof n.type === "string";
+}
+
+/**
+ * Whether every pattern in a filter tree can actually run the way the matcher
+ * reads it — a regex compiles on the engine in use, a glob compiles within
+ * the length limit. One that cannot (written for another engine, e.g. with
+ * lookahead, or too long) would quietly never match — and flip an `exclude`
+ * into a pass. Literal comparisons (`contains`, `startsWith`, ...) are not
+ * patterns and always run.
+ */
+export function filterPatternsUsable(node: FilterNode): boolean {
+  if ("all" in node) return node.all.every(filterPatternsUsable);
+  if ("any" in node) return node.any.every(filterPatternsUsable);
+  if ("not" in node) return filterPatternsUsable(node.not);
+  const op = node.type === "keyword" ? "keyword" : (node.op ?? "eq");
+  return toPatterns(node).every((p) => {
+    if (op === "regex") return compileRegex(p) !== null;
+    if (op !== "eq" && op !== "in" && op !== "ne" && op !== "keyword") return true;
+    if (isWrappedRegex(p)) return compileRegex(p.slice(1, -1)) !== null;
+    if (isGlob(p)) return compileGlob(p, op !== "keyword") !== null;
+    return true;
+  });
+}
+
 export function containsKeyword(node: FilterNode): boolean {
   if ("all" in node) return node.all.some(containsKeyword);
   if ("any" in node) return node.any.some(containsKeyword);
