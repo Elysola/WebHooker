@@ -9,6 +9,12 @@ export function useGroupRoutesApi() {
   const groupId = ref<string | null>(null);
   /** Group whose routes were last loaded (or saved) successfully. */
   const loadedId = ref<string | null>(null);
+  /**
+   * Server revision of the shown routes. Every save sends it back, so a save
+   * built on a list someone else has changed meanwhile is refused (409)
+   * instead of overwriting their change.
+   */
+  let revision: string | undefined;
   // Bumped by every load/clear, so only the latest request may land.
   let request = 0;
 
@@ -24,17 +30,19 @@ export function useGroupRoutesApi() {
     if (groupId.value !== id) {
       routes.value = [];
       loadedId.value = null;
+      revision = undefined;
     }
     groupId.value = id;
     loading.value = true;
     error.value = "";
     needLogin.value = false;
     try {
-      const data = await apiFetch<{ routes?: Route[] }>(
+      const data = await apiFetch<{ routes?: Route[]; revision?: string }>(
         `/admin/api/groups/${encodeURIComponent(id)}/routes`,
       );
       if (mine !== request) return;
       routes.value = data.routes ?? [];
+      revision = data.revision;
       loadedId.value = id;
     } catch (err) {
       if (mine === request && !needLogin.value)
@@ -50,15 +58,29 @@ export function useGroupRoutesApi() {
     groupId.value = null;
     loadedId.value = null;
     routes.value = [];
+    revision = undefined;
     loading.value = false;
     error.value = "";
   }
 
   async function save(id: string, next: Route[]): Promise<void> {
-    await apiFetch(`/admin/api/groups/${encodeURIComponent(id)}/routes`, {
-      method: "PUT",
-      body: JSON.stringify({ routes: next }),
-    });
+    let data: { routes?: Route[]; revision?: string };
+    try {
+      data = await apiFetch<{ routes?: Route[]; revision?: string }>(
+        `/admin/api/groups/${encodeURIComponent(id)}/routes`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            routes: next,
+            revision: groupId.value === id ? revision : undefined,
+          }),
+        },
+      );
+    } catch (err) {
+      // Someone changed the routes meanwhile: show theirs, nothing was written.
+      if (isConflict(err) && groupId.value === id) void load(id);
+      throw err;
+    }
     // The page may have moved on to another group while the request ran.
     if (groupId.value !== id) return;
     // What was just written is the newest state: a load of this group that
@@ -66,7 +88,8 @@ export function useGroupRoutesApi() {
     request++;
     loading.value = false;
     error.value = "";
-    routes.value = next;
+    routes.value = data.routes ?? next;
+    revision = data.revision;
     loadedId.value = id;
   }
 
