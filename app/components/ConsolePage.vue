@@ -96,6 +96,7 @@
             :groups-loading="groupsLoading"
             :logs-loading="overviewLogsLoading"
             :metrics-loading="overviewMetricsLoading"
+            :error="overviewError"
           />
 
           <template v-else-if="selectedGroup">
@@ -543,12 +544,22 @@ const { logs, loading: logsLoading, error: logsError, load: loadLogs } = useSend
 // Overview shows every group's latest sends and totals, apart from the Send
 // Logs and Stats pages and their group filters (the console stays mounted, so
 // shared state would carry one page's filter into the other).
-const { logs: overviewLogs, loading: overviewLogsLoading, load: loadOverviewLogs } = useSendLogs();
+const {
+  logs: overviewLogs,
+  loading: overviewLogsLoading,
+  error: overviewLogsError,
+  load: loadOverviewLogs,
+} = useSendLogs();
 const {
   metrics: overviewMetrics,
   loading: overviewMetricsLoading,
+  error: overviewMetricsError,
   load: loadOverviewMetrics,
 } = useMetrics();
+/** A failed overview load: shown, never passed off as "no data". */
+const overviewError = computed(
+  () => groupsError.value || overviewLogsError.value || overviewMetricsError.value,
+);
 const {
   entries: auditEntries,
   loading: auditLoading,
@@ -870,7 +881,8 @@ watch(
 async function refreshOverview(): Promise<void> {
   refreshKey.value++;
   await Promise.all([loadGroups(), loadOverviewLogs(50), loadOverviewMetrics()]);
-  push(t("overview.refreshed"));
+  if (overviewError.value) push(t("overview.refreshFailed"), "bad");
+  else push(t("overview.refreshed"));
 }
 
 function enterGroup(group: Group): void {

@@ -25,6 +25,9 @@ const en: Dict = {
   "overview.recent": "Recent deliveries",
   "overview.viewAll": "View all",
   "overview.refreshed": "Refreshed",
+  "overview.refreshFailed": "Refresh failed",
+  "overview.loadFailed":
+    "Some data could not be loaded; what is shown may be incomplete or out of date: {error}",
   "overview.thRoute": "Route",
   "overview.thGroup": "Group",
   "overview.thEvents": "Events",
@@ -475,6 +478,8 @@ const zh: Dict = {
   "overview.recent": "最近投递",
   "overview.viewAll": "查看全部",
   "overview.refreshed": "已刷新",
+  "overview.refreshFailed": "刷新失败",
+  "overview.loadFailed": "部分数据加载失败，当前显示的内容可能不完整或已过期：{error}",
   "overview.thRoute": "路由",
   "overview.thGroup": "分组",
   "overview.thEvents": "事件",

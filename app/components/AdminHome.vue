@@ -8,6 +8,8 @@ const props = defineProps<{
   groupsLoading: boolean;
   logsLoading: boolean;
   metricsLoading: boolean;
+  /** Why the latest load failed (what is shown may be empty or older). */
+  error?: string;
 }>();
 
 const { t } = useI18n();
@@ -72,6 +74,7 @@ function fmtTime(ts: number): string {
 
 <template>
   <div class="space-y-6">
+    <p v-if="error" class="err">{{ t("overview.loadFailed", { error }) }}</p>
     <!-- KPI cards -->
     <section class="grid grid-cols-2 gap-4 xl:grid-cols-4">
       <RcCard v-for="k in kpis" :key="k.label" variant="outline" padding="md" class="p-5">
