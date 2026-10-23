@@ -9,6 +9,7 @@ import {
   type T,
   buildMessage,
   repoBaseUrl,
+  shortRef,
 } from "./helpers";
 
 export function formatPush(
@@ -20,7 +21,8 @@ export function formatPush(
 ): NeutralMessage {
   const rawRef = (payload.ref as string) ?? "";
   const isTagPush = rawRef.startsWith("refs/tags/");
-  const ref = rawRef.replace("refs/heads/", "").replace("refs/tags/", "tag: ");
+  // One prefix, read once: a branch may itself be named `refs/tags/x`.
+  const ref = rawRef.startsWith("refs/tags/") ? `tag: ${shortRef(rawRef)}` : shortRef(rawRef);
   const commits = (payload.commits ?? []) as Array<{
     id?: string;
     message?: string;
@@ -52,7 +54,7 @@ export function formatPush(
           type: refType,
           ref,
         }),
-        url: refUrl(baseUrl, rawRef, refType),
+        url: refUrl(baseUrl, shortRef(rawRef), refType),
         color: GITHUB_COLORS.delete,
       },
       t,
@@ -65,7 +67,7 @@ export function formatPush(
   // instead of a confusing "0 commits pushed".
   if (created && count === 0) {
     const refType = isTagPush ? "tag" : "branch";
-    const cleanRef = rawRef.replace("refs/heads/", "").replace("refs/tags/", "");
+    const cleanRef = shortRef(rawRef);
     return buildMessage(
       {
         author,
@@ -75,7 +77,7 @@ export function formatPush(
           type: refType,
           ref: cleanRef,
         }),
-        url: refUrl(baseUrl, cleanRef, refType),
+        url: refUrl(baseUrl, shortRef(rawRef), refType),
         color: GITHUB_COLORS.create,
       },
       t,
@@ -151,7 +153,9 @@ export function formatPush(
         count,
         s: count !== 1 ? "s" : "",
         repo: repo ?? t("common.repository"),
-        ref: isTagPush ? tagLink(baseUrl, rawRef, ref) : branchLink(baseUrl, rawRef, ref),
+        ref: isTagPush
+          ? tagLink(baseUrl, shortRef(rawRef), ref)
+          : branchLink(baseUrl, shortRef(rawRef), ref),
       }),
       url: compareUrl,
       color: GITHUB_COLORS.push,

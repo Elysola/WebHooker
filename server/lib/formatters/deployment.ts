@@ -8,6 +8,7 @@ import {
   type T,
   buildMessage,
   repoBaseUrl,
+  shortRef,
 } from "./helpers";
 
 /** Shared "branch/tag + commit" fields for deployment events. */
@@ -21,7 +22,10 @@ function addDeploymentRefFields(
     const isTag = deployment.ref.startsWith("refs/tags/");
     fields.push({
       name: t("fields.branch_tag"),
-      value: isTag ? tagLink(baseUrl, deployment.ref) : branchLink(baseUrl, deployment.ref),
+      // A deployment's ref may be a full ref: its one leading prefix goes.
+      value: isTag
+        ? tagLink(baseUrl, shortRef(deployment.ref))
+        : branchLink(baseUrl, shortRef(deployment.ref)),
       inline: true,
     });
   }

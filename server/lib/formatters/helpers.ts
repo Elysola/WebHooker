@@ -67,30 +67,42 @@ export function commitLink(baseUrl: string | undefined, sha: string, short?: str
   return baseUrl ? `[\`${label}\`](${baseUrl}/commit/${encodeRefPath(sha)})` : `\`${label}\``;
 }
 
-/** Inline code + hyperlink for a branch (or bare ref), e.g. [`main`](.../tree/main). */
+/**
+ * A ref's short name: only one leading `refs/heads/` or `refs/tags/` goes —
+ * a branch may itself contain such a path (`feature/refs/tags/test`).
+ */
+export function shortRef(ref: string): string {
+  return ref.replace(/^refs\/(?:heads|tags)\//, "");
+}
+
+/**
+ * Inline code + hyperlink for a branch, e.g. [`main`](.../tree/main). Takes
+ * the short name, as written (a branch may well be called `refs/heads/x`);
+ * a full ref is shortened by the caller (`shortRef`).
+ */
 export function branchLink(baseUrl: string | undefined, branch: string, label?: string): string {
-  const clean = branch.replace("refs/heads/", "").replace("refs/tags/", "");
+  const clean = branch;
   const display = label ?? clean;
   return baseUrl ? `[\`${display}\`](${baseUrl}/tree/${encodeRefPath(clean)})` : `\`${display}\``;
 }
 
-/** Inline code + hyperlink for a tag, e.g. [`v1.0`](.../releases/tag/v1.0). */
+/** Inline code + hyperlink for a tag (its short name), e.g. [`v1.0`](.../releases/tag/v1.0). */
 export function tagLink(baseUrl: string | undefined, tag: string, label?: string): string {
-  const clean = tag.replace("refs/tags/", "");
+  const clean = tag;
   const display = label ?? clean;
   return baseUrl
     ? `[\`${display}\`](${baseUrl}/releases/tag/${encodeRefPath(clean)})`
     : `\`${display}\``;
 }
 
-/** URL for a branch or tag, when the repository base URL is available. */
+/** URL for a branch or tag (its short name), when the repository base URL is available. */
 export function refUrl(
   baseUrl: string | undefined,
   ref: string,
   type: "branch" | "tag",
 ): string | undefined {
   if (!baseUrl) return undefined;
-  const clean = ref.replace("refs/heads/", "").replace("refs/tags/", "");
+  const clean = ref;
   return type === "tag"
     ? `${baseUrl}/releases/tag/${encodeRefPath(clean)}`
     : `${baseUrl}/tree/${encodeRefPath(clean)}`;
