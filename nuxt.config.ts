@@ -50,10 +50,12 @@ export default defineNuxtConfig({
   },
   devtools: { enabled: false },
   runtimeConfig: {
-    // Overridable via NUXT_PUBLIC_DOCS_URL / NUXT_PUBLIC_REPO_URL.
+    // Overridable via NUXT_PUBLIC_DOCS_URL / NUXT_PUBLIC_REPO_URL /
+    // NUXT_PUBLIC_LEGAL_CONTACT.
     public: {
       docsUrl: "",
       repoUrl: "",
+      legalContact: "",
     },
   },
   // The config console stays a client-side SPA (same behavior as the old
