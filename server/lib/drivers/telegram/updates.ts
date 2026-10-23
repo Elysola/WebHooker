@@ -1,5 +1,7 @@
 import type { Env } from "../../types";
+import { log } from "../../lib/log";
 import { handleTelegramUpdate } from "./commands";
+import { telegramWebhookSecret } from "./secret";
 
 const MAX_BODY_SIZE = 1024 * 1024;
 
@@ -19,12 +21,16 @@ export async function handleTelegramWebhookRequest(request: Request, env: Env): 
     return new Response("Request too large", { status: 413 });
   }
 
-  const secret = env.TELEGRAM_WEBHOOK_SECRET;
-  if (secret) {
-    const token = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-    if (!token || !timingSafeEqual(token, secret)) {
-      return new Response("Invalid secret", { status: 401 });
-    }
+  // Every call must carry the webhook secret. Without a bot token there is
+  // no secret to check and nothing to act with, so the endpoint stays closed.
+  const secret = await telegramWebhookSecret(env);
+  if (!secret) {
+    log.warn("Telegram webhook called but TELEGRAM_TOKEN is not configured");
+    return new Response("Telegram is not configured", { status: 403 });
+  }
+  const token = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+  if (!token || !timingSafeEqual(token, secret)) {
+    return new Response("Invalid secret", { status: 401 });
   }
 
   const rawBody = await request.text();
