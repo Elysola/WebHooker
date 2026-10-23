@@ -418,7 +418,12 @@ function save(): void {
     members,
     adminIds: members.filter((m) => m.role === "owner").map((m) => m.login),
     owners: props.superAdmin ? (owners.length ? owners : undefined) : props.group?.owners,
-    providers: form.providers.length ? form.providers : undefined,
+    // Sources the form does not offer (e.g. "custom") are kept as they were.
+    providers: (() => {
+      const kept = (props.group?.providers ?? []).filter((p) => p !== "github" && p !== "gitea");
+      const all = [...form.providers, ...kept];
+      return all.length ? all : undefined;
+    })(),
     installationId,
     emoji: form.emoji,
     forgeSources: form.forgeSources.length
