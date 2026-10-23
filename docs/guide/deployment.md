@@ -2,6 +2,8 @@
 
 ## Cloudflare Setup
 
+`wrangler.jsonc` ships with the maintainers' `account_id` and resource ids. Replace `account_id` with your own Cloudflare account id (`bunx wrangler whoami`), or remove the field to deploy to the account you are logged in with, and replace the ids in the steps below.
+
 ### 1. Create KV Namespace
 
 ```bash
@@ -32,7 +34,8 @@ bunx wrangler secret put DISCORD_PUBLIC_KEY   # Discord app public key (Develope
 bunx wrangler secret put TELEGRAM_TOKEN       # Telegram bot token (BotFather) — required for Telegram routes
 bunx wrangler secret put FEISHU_APP_ID        # Feishu app ID — required for Feishu routes
 bunx wrangler secret put FEISHU_APP_SECRET    # Feishu app secret — required for Feishu routes
-bunx wrangler secret put ADMIN_USER_IDS       # comma-separated GitHub IDs/logins allowed into the Web UI
+bunx wrangler secret put ADMIN_USER_IDS       # comma-separated GitHub user ids allowed into the Web UI (numeric ids recommended)
+bunx wrangler secret put BASE_URL             # public URL of the worker — OAuth callbacks and the Telegram webhook sync need it
 ```
 
 ::: tip Target channels are configured per route
@@ -40,7 +43,7 @@ There is no global channel secret. Each route in the [Web UI](/guide/configurati
 :::
 
 ::: tip GitHub App ID / private key are optional
-`GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY` (PKCS#8 PEM) are used by the [App install flow](#github-app-setup) to resolve the installing account's login on the post-install choice page, and to mint installation tokens for API enrichment — fetching `workflow_run` job lists and check-suite build logs. You can skip them — the install page then shows an anonymous `inst-{installationId}` group, workflow job lists still load for public repositories (unauthenticated), and private-repo build logs are omitted. The OAuth flow only needs `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
+`GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY` (PKCS#8 PEM) are used by the [App install flow](#github-app-setup) to resolve the installing account's login on the post-install choice page, and to mint installation tokens for API enrichment — fetching `workflow_run` job lists and check-suite build logs. Without them only super admins can bind installations — the flow cannot resolve the installation's account, so it cannot verify that a signed-in user manages it — workflow job lists still load for public repositories (unauthenticated), and private-repo build logs are omitted. The OAuth flow only needs `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
 :::
 
 Discord interactions arrive via the HTTPS Interactions Endpoint, so set `DISCORD_PUBLIC_KEY` and point the **Interactions Endpoint URL** at `https://your-domain/discord/interactions`. See [Interactions Endpoint](#interactions-endpoint) below.
@@ -72,10 +75,10 @@ bun run db:migrate:prod   # apply migrations to the remote D1 database
 bun run db:migrate        # apply migrations to the local (Miniflare) database
 ```
 
-The `db:migrate` scripts run `wrangler d1 migrations apply webhooker` (see `package.json`), which applies each SQL file in `migrations/` and records applied versions in the `d1_migrations` table.
+The `db:migrate` scripts run `wrangler d1 migrations apply webhooker` (see `package.json`), which applies each SQL file in `migrations/` and records applied versions in the `d1_migrations` table. `bun run deploy` runs `db:migrate:prod` before deploying, so migrations added later are applied on the next deploy; already-applied ones are skipped, and a failed migration stops the deploy.
 
 ::: tip Databases previously migrated with `d1 execute`
-If the database already has these tables/columns (e.g. previously migrated with `wrangler d1 execute --file`), the `d1_migrations` tracking table may be missing and `db:migrate:prod` will try to re-run every migration. The `ALTER TABLE ... ADD COLUMN` statements in `0002_log_detail.sql` then fail because the columns already exist. In that case run the files directly instead:
+If the database already has these tables/columns (e.g. previously migrated with `wrangler d1 execute --file`), the `d1_migrations` tracking table may be missing and `db:migrate:prod` will try to re-run every migration. The `ALTER TABLE ... ADD COLUMN` statements in `0002_log_detail.sql` then fail because the columns already exist. In that case apply the files your database does not have yet directly (the `ALTER TABLE ... ADD COLUMN` files fail when run twice, so skip those already applied):
 
 ```bash
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0001_init.sql
@@ -89,7 +92,10 @@ bunx wrangler d1 execute webhooker --remote --file ./migrations/0008_storage_d1.
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0010_fragments.sql
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0011_feishu_links.sql
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0012_route_position.sql
+bunx wrangler d1 execute webhooker --remote --file ./migrations/0013_prune_indexes.sql
 ```
+
+Such a database has no migration history, so `bun run deploy` (which runs `db:migrate:prod` first) would try every migration again and stop. Deploy it with `bunx wrangler deploy`, and apply later migration files the same way.
 
 :::
 
@@ -101,24 +107,29 @@ The `PAYLOAD` binding parks oversized webhook payloads in R2 (`webhooker-payload
 bunx wrangler r2 bucket create webhooker-payloads
 ```
 
-The bucket is already declared in `wrangler.jsonc` (`r2_buckets`), so no binding change is needed.
+Then uncomment the `r2_buckets` block in `wrangler.jsonc` (it ships commented out); without the binding, oversized payloads stay in KV.
 
 ### 5. Create Queues (Optional)
 
-The `QUEUE` binding routes webhook delivery through Cloudflare Queues (async dispatch with retry backoff and a dead-letter queue). Skip this step to keep dispatch inline (synchronous).
+The `QUEUE` binding routes webhook delivery through Cloudflare Queues (async dispatch with retry backoff and a dead-letter queue). To keep dispatch inline (synchronous) instead, remove or comment out the `queues` block in `wrangler.jsonc`; while it is there, both queues must exist.
 
 ```bash
 bunx wrangler queues create webhooker-delivery
 bunx wrangler queues create webhooker-delivery-dlq
 ```
 
-The queues are already declared in `wrangler.jsonc` (`queues.producers` / `queues.consumers`), so no binding change is needed. The `webhooker-delivery` consumer retries retryable failures with exponential backoff (5s/30s/2m/10m) up to `max_retries`, after which the message is moved to `webhooker-delivery-dlq` and marked dead.
+The queues are already declared in `wrangler.jsonc` (`queues.producers` / `queues.consumers`), so no binding change is needed. The `webhooker-delivery` consumer retries retryable failures (5xx, 429, network, rate-limit exhaustion, Feishu token errors) with exponential backoff (5s/30s/2m/10m) up to `max_retries`, after which the message is moved to `webhooker-delivery-dlq` and marked dead. Retries are per target: targets that already succeeded — or failed permanently — are recorded and not attempted again, so one bad target never cancels the others' retries and a retry does not resend a recorded target (a send whose record could not be written may be repeated). Each consumer invocation takes at most 3 messages and shares a budget of 12 minutes and 20 target sends across them, because the Workers Free limits (50 D1 queries, 50 subrequests) apply per invocation: a message the budget did not reach is retried, and a delivery with more targets than the budget continues in a new queue message. A delivery whose every target was handled still ends as `failed` if any target failed permanently along the way. A delivery is taken with a 5-minute lease, so two consumers never dispatch the same delivery at once.
+
+> [!NOTE]
+> R2 has no per-object TTL. Parked payloads are deleted after dispatch, and the scheduled `storage-prune` task removes orphans older than five days; you may also add a bucket [lifecycle rule](https://developers.cloudflare.com/r2/buckets/object-lifecycles/) for the `webhooks/` prefix.
 
 ### 6. Deploy
 
 ```bash
-bunx wrangler deploy
+bun run deploy   # applies pending D1 migrations, then runs wrangler deploy
 ```
+
+Run from a terminal, wrangler asks for confirmation before applying pending migrations; in CI it proceeds. If you deploy through Cloudflare's Git integration (Workers Builds), set its deploy command to `bun run deploy` so migrations are applied there too.
 
 Your worker is now live at `https://webhooker.<your-subdomain>.workers.dev`.
 
@@ -151,7 +162,7 @@ Your worker is now live at `https://webhooker.<your-subdomain>.workers.dev`.
    - **Organization permissions**: Members (read) — if needed
 4. Subscribe to events (all 28 supported):
    - Push, Pull request, Issues, Issue comment, Workflow run, Workflow job, Status, Deployment, Deployment status, Ping, Release, Create, Delete, Star, Fork, Check run, Check suite, Pull request review, Pull request review comment, Commit comment, Member, Label, Milestone, Discussion, Discussion comment, Repository, Code scanning alert, Dependabot alert
-5. Generate private key — optional; set `GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY` to show the installing account's login on the post-install page and to authenticate API enrichment (workflow job lists, build logs) for private repositories (see the tip above).
+5. Generate a private key and set `GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY`: the install flow needs them to verify that the installing user manages the installation (without them only super admins can bind installations), and API enrichment (workflow job lists, build logs) uses them for private repositories (see the tip above).
 
 ### 2. Install App
 
@@ -186,20 +197,20 @@ Messages are sent via the Discord **REST API**, so pushing works with just `DISC
 2. Set the **Interactions Endpoint URL** to `https://your-domain/discord/interactions`.
 3. Every interaction request is verified with Ed25519 signatures (`X-Signature-Ed25519` over `X-Signature-Timestamp + body`).
 
-The `/gh` slash command and the `GitHub: 添加/编辑/删除评论` message commands are synced by the scheduled trigger (every 5 minutes): per-guild for instant availability, plus a global registration (24h dedup, ~1h propagation). The bot never connects to the Discord Gateway, so it shows as **offline** — messaging is unaffected (always REST).
+The `/gh` slash command and the `GitHub: 添加/编辑/删除评论` message commands are synced by the scheduled trigger (every 5 minutes): per-guild for instant availability (at most 30 API calls per run), plus a global registration (~1h propagation); both are registered again when the command definitions change. The bot never connects to the Discord Gateway, so it shows as **offline** — messaging is unaffected (always REST).
 
 Users run `/gh login` to link their GitHub account and can then comment on issues/PRs as themselves. See the [Bot Commands](/guide/commands) page for the full command reference.
 
 ## Telegram Bot Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token to `TELEGRAM_TOKEN`.
-2. (Optional) Set `TELEGRAM_WEBHOOK_SECRET`; the webhook registration passes it to Telegram as `secret_token`, and `POST /telegram/webhook` verifies it with a timing-safe compare.
-3. The worker syncs the webhook from the scheduled trigger (`setWebhook` to `{BASE_URL}/telegram/webhook`), so no manual `setWebhook` call is needed — just make sure `BASE_URL` is set.
-4. Add the bot to a group (or enable topics) and route events to `chatId` / `topicId` in the route config.
+2. (Optional) Set `TELEGRAM_WEBHOOK_SECRET`; the webhook registration passes it to Telegram as `secret_token`, and `POST /telegram/webhook` verifies it with a timing-safe compare. When unset, a secret derived from `TELEGRAM_TOKEN` is used instead, so the endpoint is never left unauthenticated (the next scheduled sync re-registers the webhook with it).
+3. The worker syncs the webhook from the scheduled trigger (`setWebhook` to `{BASE_URL}/telegram/webhook`, only when the registration changed and once a day), so no manual `setWebhook` call is needed — just make sure `BASE_URL` is set.
+4. Add the bot to a group (or enable topics) and route events to `chatId` / `topicId` in the route config. Use the numeric chat id (e.g. `-1001234567890`); `@username` targets are not accepted.
 
-In Telegram, `/gh` commands (`/gh login`, `/gh logout`, `/gh comment <text>`, `/gh merge`, `/gh close`) work by replying to a notification message — see the [Bot Commands](/guide/commands) page.
+In Telegram, `/gh` commands (`/gh login`, `/gh logout`, `/gh comment <text>`, `/gh merge`, `/gh close`) work by replying to a notification message — see the [Bot Commands](/guide/commands) page. `/gh login` only works in the private chat with the bot, and the GitHub user confirms the binding on a page that names both accounts.
 
-Avatars are rendered as a link-preview card using the built-in `GET /api/richheader` (overridable with `TELEGRAM_RICH_HEADER_HOST`).
+Avatars are rendered as a link-preview card using the built-in `GET /api/richheader` (overridable with `TELEGRAM_RICH_HEADER_HOST`; without `BASE_URL` the avatar image itself is the preview). Messages are always text messages, so in-place updates keep the full 4096-character budget.
 
 ## Feishu Bot Setup
 
@@ -210,9 +221,9 @@ Avatars are rendered as a link-preview card using the built-in `GET /api/richhea
    - `im:message:send_as_bot` (send messages as an app)
    - `im:message:send` (historical version)
 4. In **Bot** tab, turn on the bot capability. Add the bot to the target group chat (or create a new group) and copy the **Chat ID** from the group settings.
-5. In WebHooker `/admin`, create or edit a route and add a target with `platform: "feishu"`, `chatId` set to the Feishu **Chat ID**, and optional `topicId` for a topic inside the chat.
+5. In WebHooker `/admin`, create or edit a route and add a target with `platform: "feishu"` and `chatId` set to the Feishu **Chat ID** (`oc_…`); Feishu targets have no topic.
 
-WebHooker uses the app-level credentials (`FEISHU_APP_ID` / `FEISHU_APP_SECRET`) to request a `tenant_access_token`, caches it until expiry, and sends messages as an interactive card (`interactive` message type). The same token is used to edit messages in place for `workflow_run` / `check_run` progress updates.
+WebHooker uses the app-level credentials (`FEISHU_APP_ID` / `FEISHU_APP_SECRET`) to request a `tenant_access_token`, caches it per app (in memory and KV) until shortly before it expires, drops it as soon as Feishu refuses it, and sends messages as an interactive card (`interactive` message type). The same token is used to edit messages in place for `workflow_run` / `check_run` progress updates.
 
 ### Inbound: commands & buttons
 
@@ -230,7 +241,8 @@ To enable inbound:
 2. Subscribe to the events:
    - `im.message.receive_v1` — receive `/gh` commands (requires the `im:message` scope).
    - `card.action.trigger` — receive button clicks on cards.
-3. In **Credentials & Basic Info**, set the **App Secret** (already used for `FEISHU_APP_SECRET`) — it also signs the inbound callback via the `X-Lark-Signature` header, and WebHooker verifies it.
+3. In **Events & Callbacks → Encryption Strategy**, copy the **Encrypt Key** to `FEISHU_ENCRYPT_KEY` (WebHooker then verifies `X-Lark-Signature` — SHA-256 of timestamp + nonce + key + body — and decrypts encrypted callbacks) and/or the **Verification Token** to `FEISHU_VERIFICATION_TOKEN`. At least one is required; without them every callback is refused. Each event id runs once, even when Feishu retries it.
+4. `/gh login` only works in the private (p2p) chat with the bot; the GitHub user confirms the binding on a page that names both accounts.
 
 ### Required permissions
 

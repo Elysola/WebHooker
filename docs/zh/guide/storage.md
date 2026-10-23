@@ -4,58 +4,74 @@
 
 KV 只保留缓存数据和短期/临时状态。高频写入（webhook 去重、投递状态、消息追踪）存放在 D1，仅在 D1 不可用或未迁移时才回退到 KV（见[存储决策](#存储决策)）。
 
-| 键模式                                     | 值                                                                            | TTL                |
-| ------------------------------------------ | ----------------------------------------------------------------------------- | ------------------ |
-| `config:routes`                            | 路由配置缓存（D1 `d1_routes` 为权威数据源）                                   | 1 小时             |
-| `config:groups`                            | 分组配置缓存（D1 `d1_groups` 为权威数据源）                                   | 1 小时             |
-| `session:{id}`                             | 管理员会话 `{ userId, login }`                                                | 7 天               |
-| `token:{userId}`                           | `{ userId, accessToken, expiresAt, refreshToken? }`                           | 0.9 × Token 有效期 |
-| `token-reverse:{sha256}`                   | 用于按 Token 反查的用户 id                                                    | 0.9 × Token 有效期 |
-| `state:{hex}`                              | `{ redirectTo, expiresAt, discordUserId?, telegramUserId?, telegramChatId? }` | 600 秒             |
-| `invite:{token}`                           | `{ groupId, role, expiresAt, createdBy, note? }`                              | 7 天               |
-| `invite:group:{id}`                        | 每组的 Token 索引（保证邀请列表一致性）                                       | 7 天               |
-| `delivery:{provider}:{groupId}:{id}`       | Webhook 投递去重回退（D1 `dedup_keys` 为主）                                  | 7 天               |
-| `delivery-state:{provider}:{groupId}:{id}` | 队列投递状态回退（D1 `delivery_state` 为主）                                  | 1 小时             |
-| `queue:payload:{provider}:{groupId}:{id}`  | 暂存供队列消费者读取的超大 webhook 负载（R2 为主）                            | 1 小时             |
-| `nonce:{nonce}`                            | 自定义 webhook 重放防护 nonce（一次性）                                       | 600 秒             |
-| `tenant:{groupId}`                         | 分组 webhook secret（64 位 hex，控制台生成）                                  | 永久               |
-| `msg:{routeId}:{key}:{target}`             | 消息 id 追踪回退（D1 `message_tracking` 为主）                                | 1 天               |
-| `cmd:guild:{id}`                           | 已注册命令的服务器 id（去重）                                                 | 永久               |
-| `cmd:registered:global`                    | 全局命令注册标记（去重）                                                      | 1 天               |
-| `config:discord-app-id`                    | 缓存的 Discord 应用 id                                                        | 永久               |
-| `i18n:{lang}`                              | 叠加在英文之上的翻译覆盖                                                      | 永久               |
+| 键模式                                                                   | 值                                                                                                                                     | TTL                   |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `config:routes` / `config:groups`                                        | 旧版（D1 之前）配置，仅在 D1 表为空时读取一次用于播种                                                                                  | 永久                  |
+| `config:d1-seeded`                                                       | 标记 D1 已播种（已清空的 D1 不会被再次播种）                                                                                           | 永久                  |
+| `session:{id}`                                                           | 管理员会话 `{ userId, login, loginTrusted }`                                                                                           | 1 天                  |
+| `token:{userId}`                                                         | `{ userId, accessToken, expiresAt, live? }`（Token 可使用 10 小时）                                                                    | 9 小时                |
+| `token-reverse:{sha256}`                                                 | 用于按 Token 反查的用户 id                                                                                                             | 9 小时                |
+| `state:{hex}`                                                            | `{ redirectTo, expiresAt, link? }`（`link`：机器人 `/gh login` 要绑定的聊天账号）                                                      | 600 秒                |
+| `link:{nonce}`                                                           | 等待 GitHub 用户确认的机器人账号绑定                                                                                                   | 600 秒                |
+| `invite:{token}`                                                         | `{ groupId, role, expiresAt, createdBy, note?, groupInstance, issuer }`                                                                | 7 天                  |
+| `invite:group:{id}`                                                      | 每组的 Token 索引（保证邀请列表一致性）                                                                                                | 7 天                  |
+| `invite:by-group:{id}:{token}` / `invite:by-instance:{instance}:{token}` | 每个邀请的列表标记（按分组 id 与签发分组的 instance），并发创建或改名中断时邀请也不会从列表中消失                                      | 邀请有效期            |
+| `login-owner:{login}`                                                    | 第一个使用该登录名的 GitHub 账号 id；之后用同名登录的其他账号只按 user id 匹配                                                         | 永久                  |
+| `delivery:{provider}:{scope}:{id}`                                       | Webhook 投递去重回退（D1 `dedup_keys` 为主）；全局入口的 `scope` 为 `@global`，分组入口为 `@i:{instance}`（接收分组不可变的 instance） | 2～10 分钟            |
+| `delivery-state:{provider}:{scope}:{id}`                                 | 队列投递状态回退（D1 `delivery_state` 为主）                                                                                           | 7 天                  |
+| `queue:payload:{provider}:{scope}:{id}:{uuid}`                           | 未绑定 R2 时暂存供队列消费者读取的超大 webhook 负载（每次入队一个键）                                                                  | 4 天                  |
+| `tenant:{groupId}` / `tenant:i:{instance}`                               | 旧版分组 webhook secret，仅在密钥尚未存入 D1 分组行时作为回退读取；轮换或删除时清除                                                    | 永久                  |
+| `group:renamed:{oldId}`                                                  | 仅 KV 部署：分组改名后的新 id（有 D1 时该别名是改名事务中写入的 `dedup_keys` 行）                                                      | 4 天                  |
+| `msg:{chain}:{platform}:{target}`                                        | 消息追踪回退（D1 `message_tracking` 为主）                                                                                             | 30 天                 |
+| `msg:lock:…`                                                             | D1 不可用时串行化同一消息链更新的锁（有 D1 时是 `dedup_keys` 行）                                                                      | 240 秒                |
+| `storage:kv-fallback`                                                    | 标记曾在 D1 表缺失时把状态写入 KV；有效期内 D1 未命中时也会查 KV                                                                       | 35 天                 |
+| `cmd:guilds:{appId}`                                                     | 每个 Discord 应用一条：各服务器已注册命令的哈希与同步游标                                                                              | 永久                  |
+| `cmd:registered:global:{appId}`                                          | 最近一次全局注册的命令哈希（变化时重新注册，并每天一次）                                                                               | 1 天                  |
+| `config:discord-app-id:{tokenHash}`                                      | 按 bot token 解析出的 Discord 应用 id                                                                                                  | 永久                  |
+| `discord-modal:{id}`                                                     | 评论模态框上下文，仅在放不进 100 字符的 `custom_id` 时写入                                                                             | 1 天                  |
+| `feishu:token:{appId}`                                                   | 每个飞书应用的 `tenant_access_token`（内存中也会保留）                                                                                 | Token 有效期 − 6 分钟 |
+| `telegram:webhook:{botId}`                                               | 最近一次 webhook 注册内容的哈希（相同时跳过 `setWebhook`）                                                                             | 1 天                  |
+| `i18n:{lang}`                                                            | 叠加在英文之上的翻译覆盖                                                                                                               | 永久                  |
+| `config:identity-migrated`                                               | 仅 KV 部署：分组身份已由本服务器管理（一次性身份迁移已执行）                                                                           | 永久                  |
 
 ## D1 存储布局
 
 D1 数据库（`DB` 绑定，数据库 `webhooker`）保存配置、投递日志和高频临时状态的权威数据源：
 
-| 表                 | 用途                                                                          |
-| ------------------ | ----------------------------------------------------------------------------- |
-| `d1_groups`        | 分组（权威配置，从旧版 KV `config:groups` 播种）                              |
-| `d1_routes`        | 每组分组的路由（权威配置，从旧版 KV `config:routes` 播种）                    |
-| `send_logs`        | 每次分发尝试一行（路由 id、事件、目标、ok/error、耗时、错误码、详情）         |
-| `audit_logs`       | 每次管理员操作一行（登录/登出、分组/路由/成员/邀请变更）                      |
-| `dedup_keys`       | Webhook 投递去重（原子 `INSERT ... ON CONFLICT` UPSERT，键 + 过期时间）       |
-| `delivery_state`   | 队列投递状态（`pending`/`processing`/`delivered`/`retrying`/`failed`/`dead`） |
-| `message_tracking` | 原地更新用消息 id 追踪（`event_id` + `target_id` → `message_id`）             |
-| `discord_links`    | 映射 `discord_user_id` → `github_user_id`，供 `/gh` Discord 命令使用          |
-| `telegram_links`   | 映射 `telegram_user_id` → `github_user_id`，供 `/gh` Telegram 命令使用        |
+| 表                 | 用途                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `d1_groups`        | 分组（权威配置，从旧版 KV `config:groups` 播种）。每行还保存不会发给控制台的服务端字段：不可变的 `instance`、`legacyId` 以及分组 webhook 密钥                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `d1_routes`        | 每组分组的路由（权威配置，从旧版 KV `config:routes` 播种）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `send_logs`        | 每次分发尝试一行（路由 id、事件、目标、ok/error、耗时、错误码、详情）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `audit_logs`       | 每次管理员操作一行（登录/登出、分组/路由/成员/邀请变更）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `dedup_keys`       | 原子的一次性占用与记录（`INSERT ... ON CONFLICT` UPSERT，键 + 过期时间）：webhook 投递去重及其确认（`accepted:*`）、自定义 webhook nonce（`nonce:{secret 作用域}:{nonce}`）、已使用与已撤销的邀请（`invite-used:*`、`invite-revoked:*`）、机器人命令/事件去重（`bot:{platform}:…`）、已撤销的会话与 token 及每个用户当前有效的 token（`session-revoked:*`、`token-revoked:*`、`token-live:*`）、已使用的账号绑定确认（`link-used:*`）、已退役的分组 id（`group-retired:*`）与改名别名（`group-alias:*`）、安装自动配置记录（`installation-provisioned:*`、`installation-bound:*`）、排队投递中已完成或已永久失败的路由 × 目标（`delivery-target:*`、`delivery-failed:*`）、已发送的分组日志摘要、消息链锁（`msg:lock:*`）以及一次性初始化标记 |
+| `delivery_state`   | 队列投递状态（`pending`/`processing`/`delivered`/`retrying`/`failed`/`dead`）；领取投递是一次条件 UPSERT（租约），两个消费者不会同时分发同一投递                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `message_tracking` | 原地更新用消息追踪（`event_id` + `target_id` → 消息 id 及其所显示的版本）；消息链按分组 instance 建键，之后以同一 id 新建的分组不会编辑这些消息                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `d1_fragments`     | 每个分组的命名过滤器片段                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `feishu_links`     | 映射 `feishu_user_id` → `github_user_id`，供 `/gh` 飞书命令使用                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `discord_links`    | 映射 `discord_user_id` → `github_user_id`，供 `/gh` Discord 命令使用                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `telegram_links`   | 映射 `telegram_user_id` → `github_user_id`，供 `/gh` Telegram 命令使用                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-`audit_logs` 由定时任务在 `AUDIT_RETENTION_DAYS`（默认 90）后自动清理。`storage-prune` 任务会清理过期的 `dedup_keys`、超过 7 天的 `delivery_state` 行以及超过 30 天的 `message_tracking` 行。日志行字段说明见[日志](./logs)。
+`audit_logs` 由定时任务在 `AUDIT_RETENTION_DAYS`（默认 90）后自动清理。`storage-prune` 任务会清理过期的 `dedup_keys`、超过 7 天的 `delivery_state` 行、30 天未更新的 `message_tracking` 行（每次编辑都会刷新）以及遗留的 R2 负载。`send_logs` 不会自动清理。日志行字段说明见[日志](./logs)。
+
+迁移 `0013_prune_indexes.sql` 增加了这些读取依赖的索引：清理用的 `delivery_state(updated_at)`、统计页用的两个只含失败 `send_logs` 行的部分索引，以及替换单列分组索引的 `audit_logs(group_id, ts)`。索引列每次写入也会多计一行 D1 写入，因此只添加读取节省远大于写入成本的索引。
 
 ## R2 存储布局
 
 R2（`PAYLOAD` 绑定，bucket `webhooker-payloads`）存储对队列消息或 KV 来说过大的 webhook 负载：
 
-| 对象模式                          | 用途                           | 保留期     |
-| --------------------------------- | ------------------------------ | ---------- |
-| `webhooks/YYYY/MM/DD/<uuid>.json` | 暂存供队列消费者读取的超大负载 | 分发后删除 |
+| 对象模式                          | 用途                           | 保留期                          |
+| --------------------------------- | ------------------------------ | ------------------------------- |
+| `webhooks/YYYY/MM/DD/<uuid>.json` | 暂存供队列消费者读取的超大负载 | 分发后删除；遗留对象 5 天后清理 |
 
-当缺少 `PAYLOAD` 绑定时，超大负载回退到 KV 键 `queue:payload:{provider}:{groupId}:{id}`（1 小时 TTL）。
+队列消息超过 120,000 字节（UTF-8）时暂存负载。当缺少 `PAYLOAD` 绑定时，超大负载回退到 KV 键 `queue:payload:{provider}:{scope}:{id}:{uuid}`（4 天 TTL，与队列消息保留期一致）。发送队列消息失败时暂存副本会保留（调用失败时队列也可能已经收下消息）；未被使用的副本会过期或被清理。消费者需要时暂存负载已丢失，绝不会以空事件分发：投递保持 `retrying`，并写入一条 `PAYLOAD_MISSING` 发送日志，提示从源头重新投递该 webhook。
 
 ## 存储决策
 
 - **D1 是配置与投递元数据的权威数据源**；KV 只保存缓存和短期状态。
-- `canUseD1` 探测（`server/lib/storage/d1.ts`，检查 `prepare` + `batch`）为每个 D1 存储做门槛判定：当 D1 不可用或尚未迁移时，三种高频存储（去重、投递状态、消息追踪）都会透明回退到 KV，迁移期间行为不变。
+- `canUseD1` 探测（`server/lib/storage/d1.ts`，检查 `prepare` + `batch`）为每个 D1 存储做门槛判定。高频存储（去重及其他一次性占用、投递状态、消息追踪）在其 D1 表尚不存在时（数据库未迁移）回退到 KV。其他 D1 故障会直接抛出——请求返回错误，由发送方或队列重试——因为按调用切换存储会让同一占用分散在 D1 与 KV 两处。
+- D1 配置读取失败时，请求返回错误，由发送方或队列重试；配置没有 KV 副本，分发也绝不会把不可读的配置当作空配置。存储中无法读取的路由或分组行只会让所属分组的投递可见地失败并重试——见[路由 → 不可读的路由](./routes#不可读的路由)。
+- 配置写入从不回退：存在 D1 绑定时，写入失败会作为错误返回，而不是暂存到 KV。写入按分组进行（单行，或单个分组的路由/片段在一个事务中），分组行使用比较并交换，不同分组的并发编辑互不覆盖。权限检查、读改写路径、webhook 入口与队列消费者的读取绕过所有缓存（撤销的路由或目标立即停止投递）；其他读取在每个 isolate 的内存中最多缓存 60 秒。
+- 旧版 KV 配置只在两张 D1 表都为空时复制一次，且从不覆盖已有行；标记位保证被清空的配置不会复活。
 - 这让 Workers 免费版的每事件 KV 写入趋近于零（每日 1000 次写）：去重、投递状态和消息追踪改为写 D1 行（D1 免费版每日可写 10 万行）。
 - R2 免费额度（10 GB-月存储、每月 100 万次 A 类操作）可以轻松承载负载暂存，不占用 KV 写配额。

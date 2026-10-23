@@ -39,8 +39,8 @@ GitHub Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 
 - **Cloudflare Worker** — HTTP 入口、签名验证、路由分发
 - **Interactions Endpoint** — HTTPS 回调（无 Discord Gateway 连接、无 Durable Object）；bot 保持离线，命令通过 API 注册
-- **KV** — 缓存 + 临时状态：Token 存储（`token:{userId}`）、OAuth state（`state:{hex}`）、管理员会话（`session:{id}`）、分组级 webhook secret（`tenant:{groupId}`）、邀请、配置缓存、投递去重/投递状态/消息更新追踪的回退（`delivery:*`、`delivery-state:*`、`msg:*` 仅在 D1 不可用时使用）与消息更新锁（`msg:lock:*`）
-- **D1** — 路由/分组（`d1_routes`/`d1_groups`）、命名过滤器片段（`d1_fragments`）、发送日志（`send_logs`）、审计日志（`audit_logs`）、去重（`dedup_keys`）、投递状态（`delivery_state`）、消息更新追踪（`message_tracking`）、Discord↔GitHub 绑定（`discord_links`）、Telegram↔GitHub 绑定（`telegram_links`）
+- **KV** — 缓存 + 临时状态：Token 存储（`token:{userId}`）、OAuth state（`state:{hex}`）、管理员会话（`session:{id}`）、邀请、投递去重/投递状态/消息更新追踪的回退（`delivery:*`、`delivery-state:*`、`msg:*` 仅在 D1 不可用时使用）与消息更新锁（`msg:lock:*`）
+- **D1** — 路由/分组（`d1_routes`/`d1_groups`，含各分组的 webhook 密钥）、命名过滤器片段（`d1_fragments`）、发送日志（`send_logs`）、审计日志（`audit_logs`）、去重（`dedup_keys`）、投递状态（`delivery_state`）、消息更新追踪（`message_tracking`）、Discord↔GitHub 绑定（`discord_links`）、Telegram↔GitHub 绑定（`telegram_links`）
 - **Queue** — 绑定 `QUEUE` 时异步投递：`webhooker-delivery`（指数退避重试）+ 死信队列 `webhooker-delivery-dlq`；超大负载暂存于 R2（`PAYLOAD` 绑定，`webhooks/YYYY/MM/DD/*.json`，回退 KV `queue:payload:*`）
 
 ## 快速开始
@@ -48,42 +48,44 @@ GitHub Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 ```bash
 bun install          # 包管理器为 bun（锁文件：bun.lock）
 cp .env.example .dev.vars   # 填写本地开发密钥
-bun run build        # 先构建生产产物（wrangler dev 运行的是构建产物）
-bunx wrangler dev    # 启动本地开发服务器
+bun run db:migrate   # 将 D1 迁移应用到本地数据库（首次运行）
+bun run cf:dev       # 先构建，再用 wrangler dev 在本地运行 worker
 ```
 
 ## 配置
 
 ### 密钥（本地用 `.dev.vars`，生产用 Worker Secrets）
 
-| 变量                        | 说明                                                                        |
-| --------------------------- | --------------------------------------------------------------------------- |
-| `GITHUB_WEBHOOK_SECRET`     | GitHub webhook 密钥                                                         |
-| `GITEA_WEBHOOK_SECRET`      | Gitea webhook 密钥（仅接收 Gitea webhook 时需要）                           |
-| `GITHUB_APP_ID`             | GitHub App ID（用于 App 安装流程解析安装所属账号）                          |
-| `GITHUB_PRIVATE_KEY`        | App 私钥（PKCS#8 PEM；用于 App 安装流程，可选）                             |
-| `GITHUB_CLIENT_ID`          | OAuth Client ID                                                             |
-| `GITHUB_CLIENT_SECRET`      | OAuth Client Secret                                                         |
-| `DISCORD_TOKEN`             | 机器人 token                                                                |
-| `DISCORD_PUBLIC_KEY`        | Discord 应用的公钥（开发者门户获取）—— 交互功能必需                         |
-| `DISCORD_APPLICATION_ID`    | Discord 应用 ID（可选；省略时通过 `GET /oauth2/applications/@me` 自动获取） |
-| `TELEGRAM_TOKEN`            | Telegram Bot Token（BotFather 获取）—— Telegram 路由必需                    |
-| `TELEGRAM_WEBHOOK_SECRET`   | 可选；`POST /telegram/webhook` 的验签密钥                                   |
-| `TELEGRAM_RICH_HEADER_HOST` | 可选；覆盖内置 `GET /api/richheader` 的 Telegram 头像卡片地址               |
-| `FEISHU_APP_ID`             | 飞书应用 ID（应用凭证页获取）—— 飞书路由必需                                |
-| `FEISHU_APP_SECRET`         | 飞书应用密钥 —— 飞书路由必需                                                |
-| `BASE_URL`                  | 公网地址（用于 OAuth 回调与 Telegram webhook 同步）                         |
-| `ADMIN_USER_IDS`            | 允许访问 `/admin` 的 GitHub 用户 ID（或登录名），逗号分隔                   |
-| `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证                    |
-| `ALLOW_SELF_SIGNUP`         | 设为 `1` 时，无权限的 GitHub 用户首次登录自动获得个人分组（默认关闭）       |
-| `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数（默认 90）                                     |
-| `NUXT_PUBLIC_DOCS_URL`      | 可选；落地页使用的文档站点 URL                                              |
-| `NUXT_PUBLIC_REPO_URL`      | 可选；落地页使用的 GitHub 仓库 URL                                          |
-| `NUXT_PUBLIC_LEGAL_CONTACT` | 可选；`/terms` 与 `/privacy` 页面展示的联系方式                             |
+| 变量                        | 说明                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `GITHUB_WEBHOOK_SECRET`     | GitHub webhook 密钥                                                           |
+| `GITEA_WEBHOOK_SECRET`      | Gitea webhook 密钥（仅接收 Gitea webhook 时需要）                             |
+| `GITHUB_APP_ID`             | GitHub App ID——App 安装流程需要它核实安装者（没有时只有超级管理员能绑定安装） |
+| `GITHUB_PRIVATE_KEY`        | App 私钥（PKCS#8 PEM）——需与 `GITHUB_APP_ID` 一起配置，也用于 API 增强鉴权    |
+| `GITHUB_CLIENT_ID`          | OAuth Client ID                                                               |
+| `GITHUB_CLIENT_SECRET`      | OAuth Client Secret                                                           |
+| `DISCORD_TOKEN`             | 机器人 token                                                                  |
+| `DISCORD_PUBLIC_KEY`        | Discord 应用的公钥（开发者门户获取）—— 交互功能必需                           |
+| `DISCORD_APPLICATION_ID`    | Discord 应用 ID（可选；省略时通过 `GET /oauth2/applications/@me` 自动获取）   |
+| `TELEGRAM_TOKEN`            | Telegram Bot Token（BotFather 获取）—— Telegram 路由必需                      |
+| `TELEGRAM_WEBHOOK_SECRET`   | 可选；`POST /telegram/webhook` 的验签密钥（未设置时由 token 派生）            |
+| `TELEGRAM_RICH_HEADER_HOST` | 可选；覆盖内置 `GET /api/richheader` 的 Telegram 头像卡片地址                 |
+| `FEISHU_APP_ID`             | 飞书应用 ID（应用凭证页获取）—— 飞书路由必需                                  |
+| `FEISHU_APP_SECRET`         | 飞书应用密钥 —— 飞书路由必需                                                  |
+| `FEISHU_ENCRYPT_KEY`        | 飞书事件 Encrypt Key（验签 + 解密）—— 飞书入站命令需要它或下面的 token        |
+| `FEISHU_VERIFICATION_TOKEN` | 飞书事件 Verification Token，每个入站回调都会校验                             |
+| `BASE_URL`                  | 公网地址（用于 OAuth 回调与 Telegram webhook 同步）                           |
+| `ADMIN_USER_IDS`            | 超级管理员的 GitHub 用户 ID（或登录名，建议写数字 ID），逗号分隔              |
+| `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证                      |
+| `ALLOW_SELF_SIGNUP`         | 设为 `1` 时，无权限的 GitHub 用户首次登录自动获得个人分组（默认关闭）         |
+| `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数（默认 90）                                       |
+| `NUXT_PUBLIC_DOCS_URL`      | 可选；落地页使用的文档站点 URL                                                |
+| `NUXT_PUBLIC_REPO_URL`      | 可选；落地页使用的 GitHub 仓库 URL                                            |
+| `NUXT_PUBLIC_LEGAL_CONTACT` | 可选；`/terms` 与 `/privacy` 页面展示的联系方式                               |
 
 ### 路由配置
 
-路由存储在 D1（`d1_routes`，首次加载时从旧版 KV `config:routes` 同步）。**没有默认路由**——每条路由（包括目标）都必须显式定义，可通过 Web 控制台（`/admin`）或直接向 D1 存储 JSON 数组。一条路由可携带多个 `targets`，因此一个规则可以同时转发到多个频道：
+路由存储在 D1（`d1_routes`，首次加载时从旧版 KV `config:routes` 同步）。**没有默认路由**——每条路由（包括目标）都必须显式定义，可通过 Web 控制台（`/admin`）或 Admin API 管理。一条路由可携带多个 `targets`，因此一个规则可以同时转发到多个频道：
 
 ```json
 [
@@ -103,7 +105,7 @@ bunx wrangler dev    # 启动本地开发服务器
 ]
 ```
 
-`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（可选 `topicId` 指向子话题）。路由还可设置 `stop: true`（跳过本分组的后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.elysola.org/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.elysola.org/zh/guide/groups)指南。
+`target.platform` 选择推送目标：`discord`（默认）、`telegram` 或 `feishu`。Discord 目标需 `target.channelId`（可选 `threadId` 指向子区）；Telegram 目标需数字形式的 `target.chatId`（可选 `topicId` 指向话题）；飞书目标需 `target.chatId`（`oc_…`；没有话题）。路由还可设置 `stop: true`（跳过本分组的后续路由）。路由隶属于**分组**（D1 `d1_groups`，首次加载时从旧版 KV `config:groups` 同步），分组用于限定管理权限，并可限制哪些组织/用户的事件流入。完整模式见[路由与目标](https://webhooker.docs.elysola.org/zh/guide/routes)与[分组与访问控制](https://webhooker.docs.elysola.org/zh/guide/groups)指南。
 
 ### Web 控制台（`/admin`）
 
@@ -167,11 +169,12 @@ bunx wrangler dev    # 启动本地开发服务器
 - **GitHub App** — 创建应用、订阅事件、配置 OAuth 与 _Setup URL_（租户隔离）：见 [GitHub App 配置](https://webhooker.docs.elysola.org/zh/guide/deployment#github-app-设置)
 - **Discord 机器人** — 创建机器人、以 `applications.commands` scope 邀请（组合权限整数 `274877910016`）、配置 Interactions Endpoint：见 [Discord Bot 配置](https://webhooker.docs.elysola.org/zh/guide/deployment#discord-bot-设置)。bot 从不连接 Discord Gateway，因此显示为**离线**——消息推送不受影响（始终走 REST）。
 - **Telegram 机器人** — 用 [@BotFather](https://t.me/BotFather) 创建机器人，设置 `TELEGRAM_TOKEN`（可选 `TELEGRAM_WEBHOOK_SECRET`）；webhook 由定时任务自动同步：见 [Telegram 机器人配置](https://webhooker.docs.elysola.org/zh/guide/deployment#telegram-机器人配置)
+- **飞书机器人** — 创建自建应用、开启机器人能力、将机器人加入目标群聊，并设置 `FEISHU_APP_ID` + `FEISHU_APP_SECRET`：见[飞书机器人配置](https://webhooker.docs.elysola.org/zh/guide/deployment#飞书机器人配置)
 - **部署** — KV 命名空间、D1 数据库与迁移（含 0008 存储表）、可选 R2 Bucket 与 Queues、密钥、部署：见[部署指南](https://webhooker.docs.elysola.org/zh/guide/deployment)
 
 ### Bot 指令（以本人身份评论 GitHub）
 
-bot 通过定时任务（每 5 分钟）同步注册原生的**斜杠命令**与**消息右键菜单命令**：按服务器注册以获得即时可用性，并全局注册（24h 去重，约 1 小时传播）。执行 `/gh login` 后即可评论 issue/PR、编辑/删除自己的评论，并通过按钮合并/关闭 PR——所有回复均为临时消息（仅你可见），权限交由 GitHub 判定。
+bot 通过定时任务（每 5 分钟）同步注册原生的**斜杠命令**与**消息右键菜单命令**：按服务器注册以获得即时可用性，并全局注册（约 1 小时传播）；命令定义变化时两者都会重新注册。执行 `/gh login` 后即可评论 issue/PR、编辑/删除自己的评论，并通过按钮合并/关闭 PR——所有回复均为临时消息（仅你可见），权限交由 GitHub 判定。
 
 ```
 /gh login  /gh logout

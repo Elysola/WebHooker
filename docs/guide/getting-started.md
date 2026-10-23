@@ -33,12 +33,12 @@ GITHUB_CLIENT_ID=your-client-id
 GITHUB_CLIENT_SECRET=your-client-secret
 DISCORD_TOKEN=your-bot-token
 DISCORD_PUBLIC_KEY=your-public-key
-ADMIN_USER_IDS=your-github-id,your-github-login
+ADMIN_USER_IDS=your-github-id
 BASE_URL=http://localhost:8787
 ```
 
 ::: tip
-`GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY` are optional and only used by the App install flow to resolve the installing account's login (the OAuth flow only needs the client ID/secret). Target channels are set per route in the Web UI, so no `DISCORD_CHANNEL_ID` is needed. To enable `/gh` commands locally, copy the **Public Key** from the Developer Portal into `DISCORD_PUBLIC_KEY` and set the Interactions Endpoint URL to `http://localhost:8787/discord/interactions`.
+`GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY` are only needed for the GitHub App install flow and API enrichment: without them only super admins can bind installations, because the flow cannot verify that a signed-in user manages the installation (the OAuth flow itself only needs the client ID/secret). Target channels are set per route in the Web UI, so no `DISCORD_CHANNEL_ID` is needed. To enable `/gh` commands locally, copy the **Public Key** from the Developer Portal into `DISCORD_PUBLIC_KEY` and set the Interactions Endpoint URL to `http://localhost:8787/discord/interactions`.
 :::
 
 ::: warning
@@ -48,10 +48,11 @@ BASE_URL=http://localhost:8787
 ### 2. Start Dev Server
 
 ```bash
-bun run dev
+bun run db:migrate   # first run: apply the D1 migrations to the local database
+bun run cf:dev       # build, then serve the worker with wrangler dev (Miniflare)
 ```
 
-This starts a local Miniflare environment at `http://localhost:8787`.
+This serves the built worker at `http://localhost:8787`. Without the migrations the worker refuses to serve (`D1 migrations are incomplete`). For UI work, `bun run dev` starts the Nuxt dev server with HMR instead (`http://localhost:3000`; queue messages have no consumer there).
 
 ### 3. Verify
 
@@ -66,7 +67,7 @@ curl http://localhost:8787/health
 | ---------------------- | ------------------------------------------- |
 | `bun run dev`          | Start Nuxt dev server (HMR)                 |
 | `bun run build`        | Production build (cloudflare_module preset) |
-| `bun run deploy`       | Deploy to Cloudflare                        |
+| `bun run deploy`       | Apply pending D1 migrations and deploy      |
 | `bun run typecheck`    | TypeScript type checking                    |
 | `bun run lint`         | ESLint                                      |
 | `bun run lint:md`      | Markdownlint                                |

@@ -1,8 +1,8 @@
 # 路由与目标
 
-路由决定哪些事件被转发到哪个频道（Discord 或 Telegram）。它们存储在 D1（`d1_routes`，首次加载时从旧版 KV `config:routes` 键同步），可通过 [Web 控制台](./configuration#web-控制台)、[Admin API](../api/admin) 或 `config.example.yaml` 管理。
+路由决定哪些事件被转发到哪个频道（Discord 或 Telegram）。它们存储在 D1（`d1_routes`，首次加载时从旧版 KV `config:routes` 键同步），可通过 [Web 控制台](./configuration#web-控制台)或 [Admin API](../api/admin) 管理。`config.example.yaml` 以 YAML 展示数据结构，worker 不会读取它。
 
-**没有默认路由**——每条路由都必须定义自己的目标。未配置任何路由时不会转发任何事件。每个实例最多可保存 **200 条路由**。
+**没有默认路由**——每条路由都必须定义自己的目标。未配置任何路由时不会转发任何事件。单次保存最多 **200 条路由**。
 
 ## 路由模式
 
@@ -29,14 +29,20 @@
 }
 ```
 
-`targets` 的每一项都是一个推送目标，因此一条路由可同时转发到多个频道（例如一个 Discord 频道**和**一个 Telegram 群组）。`target.platform` 选择平台：`discord`（默认）、`telegram` 或 `feishu`。**Discord** 目标要求 `target.channelId`（可选 `target.threadId` 指定子区）；**Telegram** 与 **飞书** 目标要求 `target.chatId`（群组/超级群组 id，如 `-1001234567890`），可选 `target.topicId`（话题的 `message_thread_id`，相当于 Discord 子区）。没有默认频道回退。
+`targets` 的每一项都是一个推送目标，因此一条路由可同时转发到多个频道（例如一个 Discord 频道**和**一个 Telegram 群组）。`target.platform` 选择平台：`discord`（默认）、`telegram` 或 `feishu`。**Discord** 目标要求 `target.channelId`（可选 `target.threadId` 指定子区）；**Telegram** 目标要求 `target.chatId`（群组/超级群组 id，如 `-1001234567890`），可选 `target.topicId`（话题的 `message_thread_id`，相当于 Discord 子区）；**飞书**目标要求 `target.chatId`（群聊 id，`oc_…`），没有话题。没有默认频道回退。
+
+目标 id 会校验为唯一的写法（否则可以绕过跨分组归属检查）：
+
+- **Discord** —— `channelId` / `threadId` 只能包含 `A–Z a–z 0–9 _ -`（最多 64 个字符）；纯数字 id 不能以 0 开头。
+- **Telegram** —— `chatId` 为规范写法的数字 chat id（无前导零，最多 15 位；不接受 `@username`）；`topicId` 为不超过 2147483647 的正整数。
+- 同一路由不能重复列出同一目的地：`{ "channelId": T }` 与 `{ "channelId": P, "threadId": T }` 都发往子区 `T`，视为同一目的地；写法不同的 Telegram 话题 id 同理。
 
 | 字段             | 类型     | 必需 | 说明                                                                                  |
 | ---------------- | -------- | ---- | ------------------------------------------------------------------------------------- |
 | `groupId`        | string   | 是   | 路由所属[分组](./groups)的 id                                                         |
 | `fallback`       | boolean  | 否   | 为 `true` 时仅在本分组没有其他非 fallback 路由匹配时才触发；其过滤器仍会生效          |
 | `stop`           | boolean  | 否   | 为 `true` 且该路由匹配时，不再评估本分组的后续路由                                    |
-| `discordRoleIds` | string[] | 否   | 路由触发时要提醒的 Discord 身份组 id；仅对 Discord 目标生效                           |
+| `discordRoleIds` | string[] | 否   | 路由触发时要提醒的 Discord 身份组 id（最多 50 个）；仅对 Discord 目标生效             |
 | `ast`            | object   | 否   | 布尔过滤器树（`{all:[...]}` / `{any:[...]}` / `{not:{...}}`）；存在时优先于 `filters` |
 
 ## 路由顺序
@@ -44,6 +50,10 @@
 路由按控制台中显示的顺序逐个分组评估。`stop` 与 `fallback` 只在分组内生效：匹配的 `stop` 路由只跳过本分组的后续路由；只有本分组的普通路由匹配时，本分组的兜底路由才不发送——一个分组永远不会屏蔽另一个分组。在分组页点击**调整顺序**，拖动路由左侧的手柄（或聚焦手柄后按 <kbd>↑</kbd> / <kbd>↓</kbd>），再点击**保存顺序**。顺序按分组保存在 D1（`d1_routes.position`，迁移 `0012`）；未执行该迁移的数据库会继续按 id 顺序加载路由。
 
 **升级提示：** 如果现有配置依赖某个分组的 `stop` 阻止其他分组的路由执行，或依赖某个分组的普通路由匹配来抑制其他分组的兜底路由发送，请在升级时检查现有路由。这些行为现在仅在同一分组内生效，因此其他分组的路由可能开始发送消息。请将需要共同排他的路由移至同一分组，再检查它们的顺序及 `stop` / `fallback` 设置。
+
+## 不可读的路由
+
+存储中无法读取的路由——JSON 损坏、字段结构错误、过滤条件不合法，或匹配器无法编译的模式（例如为其他引擎写的前瞻正则）——绝不会被当作"不匹配"。该分组的投递会可见地失败并重试（其他分组不受影响），`GET /admin/api/groups/:id/routes` 会返回 `unreadable: true`。存在这类行时，保存该分组的路由会被拒绝，避免它在看不见的情况下被删除；如需有意替换，保存时带上 `discardUnreadable: true`。
 
 ## Discord 身份组提醒
 
@@ -79,13 +89,13 @@
     "filters": [
       { "type": "repo", "match": "myorg/backend" },
       { "type": "event", "match": "pull_request" },
-      { "type": "actor", "match": "[bot]", "exclude": true }
+      { "type": "actor", "match": "*[bot]", "exclude": true }
     ],
     "targets": [
       {
         "platform": "telegram",
         "chatId": "-1001234567890",
-        "topicId": "9876543210"
+        "topicId": "42"
       }
     ]
   }

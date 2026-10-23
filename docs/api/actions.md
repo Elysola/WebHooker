@@ -40,7 +40,7 @@ Creates a comment on an issue or pull request.
 | `issueNumber` | number | Yes      | Issue or PR number                |
 | `body`        | string | Yes      | Comment body (Markdown supported) |
 
-**Response:** `200` with GitHub API response.
+**Response:** `200 { "ok": true }`.
 
 ### Merge Pull Request
 
@@ -68,7 +68,7 @@ Merges a pull request.
 | `pullNumber` | number | Yes      | Pull request number                                |
 | `method`     | string | No       | `merge`, `squash`, or `rebase` (default: `squash`) |
 
-**Response:** `200` with GitHub merge response.
+**Response:** `200 { "ok": true }`.
 
 ### Close Pull Request
 
@@ -94,7 +94,7 @@ Closes a pull request without merging.
 | `repo`       | string | Yes      | Repository name     |
 | `pullNumber` | number | Yes      | Pull request number |
 
-**Response:** `200` with GitHub update response.
+**Response:** `200 { "ok": true }`.
 
 ### Add Reaction
 
@@ -102,7 +102,7 @@ Closes a pull request without merging.
 POST /api/react
 ```
 
-Adds an emoji reaction to an issue or comment.
+Adds an emoji reaction to an issue or pull request (not to a comment).
 
 **Request Body:**
 
@@ -115,18 +115,18 @@ Adds an emoji reaction to an issue or comment.
 }
 ```
 
-| Field         | Type   | Required | Description                  |
-| ------------- | ------ | -------- | ---------------------------- |
-| `owner`       | string | Yes      | Repository owner             |
-| `repo`        | string | Yes      | Repository name              |
-| `issueNumber` | number | Yes      | Issue, PR, or comment number |
-| `reaction`    | string | Yes      | Reaction type (see below)    |
+| Field         | Type   | Required | Description               |
+| ------------- | ------ | -------- | ------------------------- |
+| `owner`       | string | Yes      | Repository owner          |
+| `repo`        | string | Yes      | Repository name           |
+| `issueNumber` | number | Yes      | Issue or PR number        |
+| `reaction`    | string | Yes      | Reaction type (see below) |
 
 **Reaction Types:**
 
 `+1`, `-1`, `laugh`, `confused`, `heart`, `hooray`, `rocket`, `eyes`
 
-**Response:** `200` with GitHub reaction response.
+**Response:** `200 { "ok": true }`.
 
 ## Error Responses
 

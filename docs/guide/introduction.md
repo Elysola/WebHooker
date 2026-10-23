@@ -22,7 +22,7 @@ GitHub / Gitea Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cloudflare Worker**     | HTTP ingress, signature verification, delivery dedup, event parsing, route matching, platform dispatch                                                                                                                                                                                                                       |
 | **Interactions Endpoint** | Verifies Ed25519 signatures and handles `/gh` interactions (slash commands, context-menu commands, buttons, modals)                                                                                                                                                                                                          |
-| **KV**                    | Token storage (`token:{userId}`), OAuth state (`state:{hex}`), admin sessions, per-group secrets, config cache, delivery dedup/state/message-tracking fallback when D1 is unavailable (`delivery:*`, `delivery-state:*`, `msg:*`), message-update locks (`msg:lock:*`)                                                       |
+| **KV**                    | Token storage (`token:{userId}`), OAuth state (`state:{hex}`), admin sessions, invites, delivery dedup/state/message-tracking fallback when D1 is unavailable (`delivery:*`, `delivery-state:*`, `msg:*`), message-update locks (`msg:lock:*`)                                                                               |
 | **D1**                    | Routes/groups (`d1_routes`/`d1_groups`), send logs (`send_logs`), audit logs (`audit_logs`), dedup (`dedup_keys`), delivery state (`delivery_state`), message tracking (`message_tracking`), Discord↔GitHub links (`discord_links`), Telegram↔GitHub links (`telegram_links`), with R2 optionally parking oversized payloads |
 
 ### Data Flow
@@ -40,7 +40,7 @@ GitHub / Gitea Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 - **Runtime**: Cloudflare Workers
 - **HTTP Framework**: Nuxt 4 / Nitro (H3)
 - **Discord delivery**: Discord REST API (interactions via an Ed25519-verified HTTPS Interactions Endpoint)
-- **Telegram delivery**: Telegram Bot API (webhook with optional secret-token verification)
+- **Telegram delivery**: Telegram Bot API (webhook calls always verified with a secret token — explicit, or derived from the bot token)
 - **Web UI**: Nuxt 4 (Vue 3 + Tailwind CSS v4 + `@elysola/ui`) — server-rendered home/legal pages, client-side `/admin` console
 - **Storage**: Cloudflare D1 (authoritative for config & logs) + KV (cache/transient state) + optional R2 (oversized payloads)
 - **Auth**: Web Crypto API (HMAC-SHA256, Ed25519), octokit (GitHub API)

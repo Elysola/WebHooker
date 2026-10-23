@@ -40,7 +40,7 @@ POST /api/comment
 | `issueNumber` | number | 是   | 议题或 PR 编号            |
 | `body`        | string | 是   | 评论内容（支持 Markdown） |
 
-**响应：** `200` 与 GitHub API 响应。
+**响应：** `200 { "ok": true }`。
 
 ### 合并拉取请求
 
@@ -68,7 +68,7 @@ POST /api/merge
 | `pullNumber` | number | 是   | 拉取请求编号                                    |
 | `method`     | string | 否   | `merge`、`squash` 或 `rebase`（默认：`squash`） |
 
-**响应：** `200` 与 GitHub 合并响应。
+**响应：** `200 { "ok": true }`。
 
 ### 关闭拉取请求
 
@@ -94,7 +94,7 @@ POST /api/close
 | `repo`       | string | 是   | 仓库名称     |
 | `pullNumber` | number | 是   | 拉取请求编号 |
 
-**响应：** `200` 与 GitHub 更新响应。
+**响应：** `200 { "ok": true }`。
 
 ### 添加反应
 
@@ -102,7 +102,7 @@ POST /api/close
 POST /api/react
 ```
 
-为议题或评论添加表情反应。
+为议题或拉取请求添加表情反应（不支持评论）。
 
 **请求体：**
 
@@ -115,18 +115,18 @@ POST /api/react
 }
 ```
 
-| 字段          | 类型   | 必需 | 说明                |
-| ------------- | ------ | ---- | ------------------- |
-| `owner`       | string | 是   | 仓库所有者          |
-| `repo`        | string | 是   | 仓库名称            |
-| `issueNumber` | number | 是   | 议题、PR 或评论编号 |
-| `reaction`    | string | 是   | 反应类型（见下方）  |
+| 字段          | 类型   | 必需 | 说明               |
+| ------------- | ------ | ---- | ------------------ |
+| `owner`       | string | 是   | 仓库所有者         |
+| `repo`        | string | 是   | 仓库名称           |
+| `issueNumber` | number | 是   | 议题或 PR 编号     |
+| `reaction`    | string | 是   | 反应类型（见下方） |
 
 **反应类型：**
 
 `+1`、`-1`、`laugh`、`confused`、`heart`、`hooray`、`rocket`、`eyes`
 
-**响应：** `200` 与 GitHub 反应响应。
+**响应：** `200 { "ok": true }`。
 
 ## 错误响应
 
