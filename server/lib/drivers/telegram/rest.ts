@@ -9,6 +9,12 @@ interface TelegramResponse {
   result?: { message_id?: number };
 }
 
+/**
+ * Longest a single API call may take. Bounded, so a message edit always ends
+ * well within the update-chain lock it runs under (see `deliverUpdate`).
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
 async function post(
   token: string,
   method: string,
@@ -25,6 +31,7 @@ async function post(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       lastStatus = res.status;
       const data = (await res.json().catch(() => null)) as TelegramResponse | null;
