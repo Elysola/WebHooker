@@ -365,4 +365,6 @@ export interface FormattedMessage {
       custom_id?: string;
     }>;
   }>;
+  /** Which mentions in `content` may notify; set so only the route's roles ping. */
+  allowed_mentions?: { parse: string[]; roles?: string[] };
 }
