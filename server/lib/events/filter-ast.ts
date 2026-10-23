@@ -1,40 +1,93 @@
+import { RE2JS } from "re2js";
 import type { WebhookEvent, Filter, FilterNode, FilterOp } from "../types";
 
-const regexCache = new Map<string, RegExp>();
+/** A compiled user pattern; `test` searches (like `RegExp#test`). */
+interface Pattern {
+  test(text: string): boolean;
+}
+
+const patternCache = new Map<string, Pattern | null>();
 const keywordBodyCache = new WeakMap<WebhookEvent, string>();
 const MAX_PATTERN_LENGTH = 200;
+const MAX_CACHED_PATTERNS = 500;
 
 function isWrappedRegex(pattern: string): boolean {
   return pattern.length >= 2 && pattern.startsWith("/") && pattern.endsWith("/");
 }
 
-function compileRegex(pattern: string): RegExp | null {
-  if (pattern.length > MAX_PATTERN_LENGTH) return null;
-  const cached = regexCache.get(pattern);
-  if (cached) return cached;
+/**
+ * Compile with RE2 (re2js): matching runs in time linear in the input, so no
+ * pattern — however it nests or repeats — can stall a Worker on a crafted
+ * payload. RE2 has no backreferences or lookaround; such patterns are invalid.
+ */
+function compileRe2(source: string): Pattern {
+  const re = RE2JS.compile(source, RE2JS.CASE_INSENSITIVE);
+  return { test: (text: string): boolean => re.matcher(text).find() };
+}
+
+/**
+ * Why a user-supplied regex cannot be used, or null when it is fine. Patterns
+ * run on the linear-time RE2 engine, so only the length limit and the RE2
+ * syntax (no backreferences or lookaround) constrain them.
+ */
+export function regexSafetyIssue(source: string): string | null {
+  if (source.length > MAX_PATTERN_LENGTH) return "pattern is too long";
   try {
-    const re = new RegExp(pattern, "i");
-    regexCache.set(pattern, re);
-    return re;
-  } catch {
+    compileRe2(source);
     return null;
+  } catch {
+    return "invalid or unsupported regular expression (RE2 syntax: no backreferences or lookaround)";
   }
 }
 
-function compileGlob(pattern: string, anchored: boolean): RegExp | null {
-  if (pattern.length > MAX_PATTERN_LENGTH) return null;
-  const cacheKey = `${anchored ? "a" : "s"}:${pattern}`;
-  const cached = regexCache.get(cacheKey);
-  if (cached) return cached;
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  const body = escaped.replace(/\*/g, ".*").replace(/\?/g, ".");
-  try {
-    const re = new RegExp(anchored ? `^${body}$` : body, "i");
-    regexCache.set(cacheKey, re);
-    return re;
-  } catch {
-    return null;
+function cached(key: string, build: () => Pattern | null): Pattern | null {
+  if (patternCache.has(key)) {
+    // Most recently used last: the oldest unused pattern is evicted first.
+    const hit = patternCache.get(key) ?? null;
+    patternCache.delete(key);
+    patternCache.set(key, hit);
+    return hit;
   }
+  // Bounded: patterns come from every group's routes and test requests. One
+  // pattern makes room at a time — clearing everything would recompile every
+  // pattern in use once the limit is reached.
+  if (patternCache.size >= MAX_CACHED_PATTERNS) {
+    patternCache.delete(patternCache.keys().next().value!);
+  }
+  const re = build();
+  patternCache.set(key, re);
+  return re;
+}
+
+function compileRegex(pattern: string): Pattern | null {
+  // Regex and glob entries live under distinct prefixes: the regex `a:foo*`
+  // and the anchored glob `foo*` must never share a cache slot.
+  return cached(`r:${pattern}`, () => {
+    if (pattern.length > MAX_PATTERN_LENGTH) return null;
+    try {
+      return compileRe2(pattern);
+    } catch {
+      return null;
+    }
+  });
+}
+
+function compileGlob(pattern: string, anchored: boolean): Pattern | null {
+  if (pattern.length > MAX_PATTERN_LENGTH) return null;
+  // Repeated `*` match the same as one; an unanchored search needs no leading
+  // or trailing `*` at all.
+  let glob = pattern.replace(/\*+/g, "*");
+  if (!anchored) glob = glob.replace(/^\*+|\*+$/g, "");
+  return cached(`${anchored ? "a" : "s"}:${glob}`, () => {
+    const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    // One pass: a sequential replace would rewrite the `?` of `(?s:` again.
+    const body = escaped.replace(/[*?]/g, (c) => (c === "*" ? "(?s:.*)" : "(?s:.)"));
+    try {
+      return compileRe2(anchored ? `^${body}$` : body);
+    } catch {
+      return null;
+    }
+  });
 }
 
 function isGlob(pattern: string): boolean {

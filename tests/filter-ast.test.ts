@@ -168,3 +168,26 @@ describe("matchRoute AST integration", () => {
     expect(matchRoute({ ...baseRoute, enabled: false }, event())).toBe(false);
   });
 });
+
+describe("filter-ast pattern engine", () => {
+  test("runs backtracking-prone patterns in linear time", () => {
+    const started = Date.now();
+    const text = `${"a".repeat(50_000)}!`;
+    for (const match of ["/(a+)+$/", "/a+a+a+a+$/", "*a*a*a*a*b"]) {
+      expect(
+        evaluateFilterNode(
+          { type: "field", path: "body", match },
+          event({ payload: { body: text } }),
+        ),
+      ).toBe(false);
+    }
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  test("keeps glob ? and * semantics", () => {
+    const ev = event();
+    expect(evaluateFilterNode({ type: "repo", match: "acme/w?dget" }, ev)).toBe(true);
+    expect(evaluateFilterNode({ type: "repo", match: "acme/*" }, ev)).toBe(true);
+    expect(evaluateFilterNode({ type: "repo", match: "acme" }, ev)).toBe(false);
+  });
+});
