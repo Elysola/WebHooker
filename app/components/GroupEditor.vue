@@ -330,7 +330,8 @@ watch(
     form.emoji = g?.emoji ?? true;
     form.forgeSources = (g?.forgeSources ?? []).map((s) => ({ ...s }));
     form.lang = g?.lang ?? "";
-    form.logPlatform = lt?.platform ?? "";
+    // A stored target without a platform is a Discord one (as the server reads it).
+    form.logPlatform = lt ? (lt.platform ?? "discord") : "";
     form.logChannelId = lt?.channelId ?? "";
     form.logThreadId = lt?.threadId ?? "";
     form.logChatId = lt?.chatId ?? "";
