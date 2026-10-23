@@ -7,10 +7,26 @@ export function useAuthState() {
   return { needLogin };
 }
 
+/** A failed admin API call, with its HTTP status (409: changed meanwhile). */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** The write lost against a concurrent change: the shown data is stale. */
+export function isConflict(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 409;
+}
+
 /**
  * JSON fetch for same-origin admin API calls: sends credentials, treats 401
  * as "not logged in" (flips the shared flag and throws), and surfaces the
- * server's `{ error }` message on failure.
+ * server's `{ error }` message (as an ApiError with the status) on failure.
  */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -32,11 +48,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   });
   if (res.status === 401) {
     useAuthState().needLogin.value = true;
-    throw new Error("unauthorized");
+    throw new ApiError("unauthorized", 401);
   }
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `HTTP ${res.status}`);
+    throw new ApiError(data.error ?? `HTTP ${res.status}`, res.status);
   }
   return (await res.json()) as T;
 }
