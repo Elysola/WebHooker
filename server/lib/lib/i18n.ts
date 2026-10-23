@@ -1,5 +1,6 @@
 import { en } from "./locales/en";
 import { zh } from "./locales/zh";
+import { sharedFlight, type Flight } from "./shared-flight";
 
 type NestedStrings = { [key: string]: string | NestedStrings };
 export type Translations = NestedStrings;
@@ -22,6 +23,13 @@ function interpolate(template: string, params: Record<string, string | number>):
 
 const cache = new Map<string, Translations>();
 
+/** Languages found without an override, until when (a read failure is not one). */
+const missing = new Map<string, number>();
+const MISSING_RECHECK_MS = 5 * 60_000;
+const MAX_MISSING = 100;
+/** Override reads in flight: concurrent asks for one language share a KV read. */
+const loading = new Map<string, Flight<Translations>>();
+
 export async function loadTranslations(
   lang: string,
   kv?: { get<T>(key: string, type: "json"): Promise<T | null> },
@@ -31,9 +39,19 @@ export async function loadTranslations(
 
   const cached = cache.get(lang);
   if (cached) return cached;
+  // A language with no override is not looked up again for a while: every
+  // dispatch asks for each group's language, and each ask is a KV read.
+  if ((missing.get(lang) ?? 0) > Date.now()) return en;
 
   if (!kv) return en;
 
+  return sharedFlight(loading, lang, () => readOverride(lang, kv), 10_000);
+}
+
+async function readOverride(
+  lang: string,
+  kv: { get<T>(key: string, type: "json"): Promise<T | null> },
+): Promise<Translations> {
   try {
     const stored = await kv.get<Partial<Translations>>(`i18n:${lang}`, "json");
     if (stored) {
@@ -41,6 +59,8 @@ export async function loadTranslations(
       cache.set(lang, merged);
       return merged;
     }
+    if (missing.size >= MAX_MISSING) missing.clear();
+    missing.set(lang, Date.now() + MISSING_RECHECK_MS);
   } catch {
     // KV read failed, fall back to EN
   }
