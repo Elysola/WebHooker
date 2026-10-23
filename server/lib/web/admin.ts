@@ -533,7 +533,7 @@ export async function adminInvite(event: H3Event): Promise<void> {
     );
     return;
   }
-  const result = await acceptInvite(env.KV, token, session.userId, session.login);
+  const result = await acceptInvite(env, token, session.userId, session.login);
   if (result.ok) {
     await recordAudit(env.DB, {
       ts: Date.now(),

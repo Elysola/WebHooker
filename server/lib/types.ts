@@ -105,11 +105,16 @@ export type GroupRole = "owner" | "admin" | "viewer";
 
 export interface GroupMember {
   /**
-   * GitHub login (case-insensitive). Ids are matched when stored, logins
-   * otherwise; identityMatches handles both.
+   * GitHub login (case-insensitive). An unbound all-digit entry (legacy
+   * `adminIds`) is read as a user id; see `memberMatches`.
    */
   login: string;
   role: GroupRole;
+  /**
+   * Immutable GitHub user id of the member, bound by the server (invite
+   * acceptance, the member's sign-in). Once bound, only that account matches.
+   */
+  userId?: string;
 }
 
 export interface Group {
