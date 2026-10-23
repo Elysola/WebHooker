@@ -17,6 +17,14 @@ export interface Env {
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
   /**
+   * Feishu event "Encrypt Key": verifies `X-Lark-Signature` and decrypts
+   * encrypted callbacks. This or FEISHU_VERIFICATION_TOKEN is required for
+   * inbound Feishu commands and card buttons.
+   */
+  FEISHU_ENCRYPT_KEY?: string;
+  /** Feishu event "Verification Token", checked against every callback payload. */
+  FEISHU_VERIFICATION_TOKEN?: string;
+  /**
    * When enabled ("1"/"true"), GitHub users without any group access get a
    * personal group on first login instead of being blocked.
    */
