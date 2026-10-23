@@ -19,6 +19,9 @@ md.renderer.rules.strong_open = (): string => "<b>";
 md.renderer.rules.strong_close = (): string => "</b>";
 md.renderer.rules.em_open = (): string => "<i>";
 md.renderer.rules.em_close = (): string => "</i>";
+// Telegram's HTML has no <br>: a Markdown hard break ("two spaces, newline")
+// would get the whole message rejected. A plain newline breaks the line there.
+md.renderer.rules.hardbreak = (): string => "\n";
 
 function mdToHtml(s: string): string {
   return md.renderInline(s);
