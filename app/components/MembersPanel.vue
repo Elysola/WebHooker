@@ -133,7 +133,11 @@ const inviteRoleOptions = computed(() =>
 watch(
   () => props.group,
   (g) => {
-    members.value = (g.members ?? []).map((m) => ({ ...m }));
+    // A group from before member roles lists its owners in `adminIds` only:
+    // read as owners (as the server does), so a save never drops them.
+    members.value = g.members?.length
+      ? g.members.map((m) => ({ ...m }))
+      : (g.adminIds ?? []).map((login) => ({ login, role: "owner" as const }));
     formError.value = "";
     if (props.canEdit) loadInvites();
   },
