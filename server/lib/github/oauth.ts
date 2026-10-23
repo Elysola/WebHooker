@@ -177,6 +177,31 @@ function mapGitHubError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
+/**
+ * The immutable user id GitHub has for `login` right now, or null when it is
+ * unknown (no such user, no answer). Looked up with the caller's own token.
+ */
+export async function resolveGitHubUserId(token: string, login: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "WebHooker",
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { id?: unknown; login?: unknown };
+    const sameLogin =
+      typeof data.login === "string" && data.login.toLowerCase() === login.toLowerCase();
+    return sameLogin && typeof data.id === "number" ? String(data.id) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function requireOctokit(kv: KVNamespace, githubUserId: string): Promise<Octokit> {
   const octokit = await getUserOctokit(githubUserId, kv);
   if (!octokit) throw new Error("GITHUB_TOKEN_EXPIRED");
