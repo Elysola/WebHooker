@@ -1,19 +1,31 @@
-import type { Env, Config, Route } from "./types";
-import { log } from "./lib/log";
-import { migrateRoutes, validateRoutes } from "./config/schema";
-import { d1ConfigStore, type ConfigStore } from "./storage/config-store";
+import type { Env, Config, Group, Route } from "./types";
+import {
+  createConfigStore,
+  kvConfigStore,
+  type ConfigStore,
+  type GuardedWrite,
+  type LoadOptions,
+} from "./storage/config-store";
+import { canUseD1 } from "./storage/d1";
 
-const CONFIG_CACHE_TTL = 300_000;
-const ROUTES_KEY = "config:routes";
-let configCache: { config: Config; expiresAt: number } | null = null;
 const configStores = new WeakMap<KVNamespace, ConfigStore>();
 
-export function getConfigStore(kv: KVNamespace): ConfigStore | null {
-  return configStores.get(kv) ?? null;
+/**
+ * The configuration store bound to this KV namespace. Every request, queue
+ * batch and scheduled task registers the D1-backed store first (see
+ * `initConfigStore`); a namespace that was never registered — a test, or a
+ * deployment without D1 — reads and writes the KV-only store.
+ */
+export function getConfigStore(kv: KVNamespace): ConfigStore {
+  return configStores.get(kv) ?? kvConfigStore(kv);
 }
 
 export function initConfigStore(env: Env): ConfigStore {
-  return ensureStore(env);
+  const existing = configStores.get(env.KV);
+  if (existing && (existing.kind === "d1" || !canUseD1(env.DB))) return existing;
+  const store = createConfigStore(env.DB, env.KV);
+  configStores.set(env.KV, store);
+  return store;
 }
 
 export function resetConfigStore(kv?: KVNamespace): void {
@@ -23,52 +35,64 @@ export function resetConfigStore(kv?: KVNamespace): void {
   }
 }
 
-function ensureStore(env: Env): ConfigStore {
-  let store = configStores.get(env.KV);
-  if (!store) {
-    store = d1ConfigStore(env.DB, env.KV);
-    configStores.set(env.KV, store);
-  }
-  return store;
-}
-
-export async function loadRoutes(kv: KVNamespace): Promise<Route[]> {
-  const store = configStores.get(kv);
-  if (store) return store.loadRoutes();
-
-  try {
-    const stored = await kv.get<Route[]>(ROUTES_KEY, "json");
-    if (stored) return validateRoutes(migrateRoutes(stored));
-  } catch (err) {
-    log.warn({ err }, "Failed to load routes from KV");
-  }
-  return [];
+export async function loadRoutes(kv: KVNamespace, opts?: LoadOptions): Promise<Route[]> {
+  return getConfigStore(kv).loadRoutes(opts);
 }
 
 export async function saveRoutes(kv: KVNamespace, routes: Route[]): Promise<void> {
-  const store = configStores.get(kv);
-  if (store) {
-    await store.saveRoutes(routes);
-    configCache = null;
-    return;
-  }
-  await kv.put(ROUTES_KEY, JSON.stringify(routes));
-  configCache = null;
+  await getConfigStore(kv).saveRoutes(routes);
 }
 
-export function invalidateConfigCache(): void {
-  configCache = null;
+export async function saveGroupRoutes(
+  kv: KVNamespace,
+  groupId: string,
+  routes: Route[],
+  opts?: GuardedWrite<Route[]>,
+): Promise<Route[]> {
+  return getConfigStore(kv).saveGroupRoutes(groupId, routes, opts);
 }
 
+/** Drop every cached configuration snapshot held by this isolate. */
+export function invalidateConfigCache(kv?: KVNamespace): void {
+  if (kv) configStores.get(kv)?.invalidateCache();
+}
+
+/** One group, read fresh (its row alone): see `ConfigStore.loadGroup`. */
+export function loadGroupFresh(
+  env: Env,
+  id: string,
+): Promise<{ group: Group | null; unreadable: boolean }> {
+  return initConfigStore(env).loadGroup(id);
+}
+
+/**
+ * Configuration and groups of one consistent moment, for a dispatch that
+ * needs both (routes of a renamed group must never meet its old id, nor new
+ * targets meet stale source restrictions).
+ */
+export async function loadConfigSnapshot(
+  env: Env,
+  opts?: LoadOptions,
+): Promise<{ config: Config; groups: Group[] }> {
+  const store = initConfigStore(env);
+  const { routes, groups, unreadable } = await store.loadSnapshot(opts);
+  const config = buildConfig(env, routes);
+  if (unreadable?.length) config.unreadableGroups = unreadable;
+  return { config, groups };
+}
+
+/**
+ * The configuration for one dispatch. Each call returns a fresh object with
+ * its own `routes` array, so a caller narrowing the routes (tenant scoping)
+ * can never leak that change into another request served by this isolate.
+ */
 export async function loadConfig(env: Env): Promise<Config> {
-  if (configCache && Date.now() < configCache.expiresAt) {
-    return configCache.config;
-  }
+  initConfigStore(env);
+  return buildConfig(env, await loadRoutes(env.KV));
+}
 
-  ensureStore(env);
-  const routes = await loadRoutes(env.KV);
-
-  const config: Config = {
+function buildConfig(env: Env, routes: Route[]): Config {
+  return {
     baseUrl: env.BASE_URL ?? "https://webhooker.example.workers.dev",
     github: {
       webhookSecret: env.GITHUB_WEBHOOK_SECRET,
@@ -80,9 +104,6 @@ export async function loadConfig(env: Env): Promise<Config> {
     discord: {
       token: env.DISCORD_TOKEN ?? "",
     },
-    routes,
+    routes: [...routes],
   };
-
-  configCache = { config, expiresAt: Date.now() + CONFIG_CACHE_TTL };
-  return config;
 }

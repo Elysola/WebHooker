@@ -61,6 +61,7 @@ export const routeSchema = v.object({
 export const groupMemberSchema = v.object({
   login: v.string(),
   role: v.picklist(["owner", "admin", "viewer"]),
+  userId: v.optional(v.string()),
 });
 
 export const forgeSourceSchema = v.object({
@@ -77,6 +78,11 @@ export const groupSchema = v.object({
   owners: v.optional(v.array(v.string())),
   providers: v.optional(v.array(v.picklist(["github", "gitea", "gitlab", "custom"]))),
   installationId: v.optional(v.number()),
+  isolated: v.optional(v.boolean()),
+  instance: v.optional(v.string()),
+  instanceBackfilled: v.optional(v.boolean()),
+  legacyId: v.optional(v.string()),
+  webhookSecret: v.optional(v.nullable(v.string())),
   emoji: v.optional(v.boolean()),
   forgeSources: v.optional(v.array(forgeSourceSchema)),
   lang: v.optional(v.string()),
