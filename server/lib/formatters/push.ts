@@ -9,6 +9,7 @@ import {
   type T,
   buildMessage,
   repoBaseUrl,
+  senderProfileUrl,
   shortRef,
 } from "./helpers";
 
@@ -107,7 +108,9 @@ export function formatPush(
       if (commitAuthor === "invalid-email-address") {
         if (commitAuthorName) msg += ` - ${commitAuthorName}`;
       } else {
-        msg += ` - [${commitAuthor}](https://github.com/${encodeURIComponent(commitAuthor)})`;
+        // On the forge the push came from (a Gitea author is not the
+        // GitHub account of the same name).
+        msg += ` - [${commitAuthor}](${senderProfileUrl(baseUrl ?? undefined, commitAuthor)})`;
       }
     }
     const url = baseUrl && c.id ? `${baseUrl}/commit/${c.id}` : null;
