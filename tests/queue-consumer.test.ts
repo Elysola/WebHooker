@@ -80,7 +80,7 @@ function body(overrides: Partial<DeliveryMessage> = {}): DeliveryMessage {
   };
 }
 
-const STATE_KEY = "delivery-state:github:global:d1";
+const STATE_KEY = "delivery-state:github:@global:d1";
 
 describe("handleQueueBatch", () => {
   beforeEach(() => {

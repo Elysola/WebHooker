@@ -6,6 +6,8 @@ import {
   enqueueWebhook,
   getDeliveryState,
   isRetryableError,
+  isRetryableFailure,
+  PayloadUnavailableError,
   resolvePayload,
   retryDelay,
   setDeliveryState,
@@ -13,6 +15,8 @@ import {
   type DispatchSummary,
 } from "../server/lib/queue/delivery";
 import type { Env } from "../server/lib/types";
+import { markDeliveryDead, getDeliveryState } from "../server/lib/queue/delivery";
+import { createMemoryKV, createSqliteD1 } from "./d1-sqlite";
 
 function createMockKV(): { kv: KVNamespace; store: Map<string, string> } {
   const store = new Map<string, string>();
@@ -105,7 +109,8 @@ describe("classifyDelivery", () => {
     };
     expect(classifyDelivery(summary)).toEqual({ failed: true, retryable: true });
   });
-  it("is not retryable when any failure is permanent", () => {
+  it("stays retryable when a permanent failure sits next to a transient one", () => {
+    // The permanent target is recorded as done; only the transient one retries.
     const summary: DispatchSummary = {
       attempts: 2,
       failures: [
@@ -113,7 +118,25 @@ describe("classifyDelivery", () => {
         { target: "c2", errorCode: "DISCORD_ERROR" },
       ],
     };
+    expect(classifyDelivery(summary)).toEqual({ failed: true, retryable: true });
+  });
+  it("is not retryable when every failure is permanent", () => {
+    const summary: DispatchSummary = {
+      attempts: 2,
+      failures: [
+        { target: "c1", errorCode: "DISCORD_ERROR" },
+        { target: "c2", errorCode: "FORMAT" },
+      ],
+    };
     expect(classifyDelivery(summary)).toEqual({ failed: true, retryable: false });
+  });
+  it("treats 5xx and 429 statuses as transient whatever the code", () => {
+    expect(isRetryableFailure({ target: "x", errorCode: "FEISHU_99991400", status: 429 })).toBe(
+      true,
+    );
+    expect(isRetryableFailure({ target: "x", errorCode: "FEISHU_ERROR", status: 502 })).toBe(true);
+    expect(isRetryableFailure({ target: "x", errorCode: "FEISHU_5XX" })).toBe(true);
+    expect(isRetryableFailure({ target: "x", errorCode: "FEISHU_ERROR", status: 400 })).toBe(false);
   });
 });
 
@@ -135,7 +158,11 @@ describe("delivery state", () => {
 
   it("scopes state keys by provider, group and delivery id", () => {
     expect(deliveryStateKey("github", "g1", "d1")).toBe("delivery-state:github:g1:d1");
-    expect(deliveryStateKey("github", undefined, "d1")).toBe("delivery-state:github:global:d1");
+    expect(deliveryStateKey("github", undefined, "d1")).toBe("delivery-state:github:@global:d1");
+    // A group literally named "global" never shares state with the global endpoint.
+    expect(deliveryStateKey("github", "global", "d1")).not.toBe(
+      deliveryStateKey("github", undefined, "d1"),
+    );
   });
 });
 
@@ -159,10 +186,34 @@ describe("enqueueWebhook", () => {
     await enqueueWebhook(env, message({ payload: { data: large } }));
     expect(sent).toHaveLength(1);
     expect(sent[0].payload).toBeUndefined();
-    expect(sent[0].payloadRef).toBe("queue:payload:github:global:d1");
-    const stored = store.get("queue:payload:github:global:d1");
+    expect(sent[0].payloadRef).toMatch(/^queue:payload:github:@global:d1:/);
+    const stored = store.get(sent[0].payloadRef!);
     expect(stored).toBeDefined();
     expect(JSON.parse(stored!).data).toBe(large);
+  });
+
+  it("measures the message in UTF-8 bytes, not characters", async () => {
+    const { kv } = createMockKV();
+    const { queue, sent } = createMockQueue();
+    // 50k CJK characters are ~150 KB: over the queue limit despite the length.
+    await enqueueWebhook(createEnv(kv, queue), message({ payload: { data: "中".repeat(50_000) } }));
+    expect(sent[0].payload).toBeUndefined();
+    expect(sent[0].payloadRef).toBeDefined();
+  });
+
+  it("keeps the parked payload and rethrows when the send fails", async () => {
+    const { kv, store } = createMockKV();
+    const queue = {
+      send: async () => {
+        throw new Error("queue down");
+      },
+    } as unknown as Queue;
+    await expect(
+      enqueueWebhook(createEnv(kv, queue), message({ payload: { data: "x".repeat(150_000) } })),
+    ).rejects.toThrow("queue down");
+    // The queue may have taken the message despite the error: its payload
+    // stays (and expires on its own).
+    expect([...store.keys()].filter((k) => k.startsWith("queue:payload:"))).toHaveLength(1);
   });
 
   it("throws when the QUEUE binding is missing", async () => {
@@ -192,14 +243,39 @@ describe("resolvePayload / discardPayload", () => {
     ).toEqual({ a: 1 });
   });
 
-  it("returns an empty object when the payloadRef is missing", async () => {
+  it("throws when the parked payload is missing", async () => {
     const { kv } = createMockKV();
-    expect(
-      await resolvePayload(
+    await expect(
+      resolvePayload(
         createEnv(kv),
-        message({ payload: undefined, payloadRef: "queue:payload:missing" }),
+        message({
+          payload: undefined,
+          payloadRef: "queue:payload:missing",
+          receivedAt: Date.now() - 3600_000,
+        }),
       ),
-    ).toEqual({});
+    ).rejects.toBeInstanceOf(PayloadUnavailableError);
+  });
+
+  it("retries (rather than gives up on) a KV payload parked moments ago", async () => {
+    const { kv } = createMockKV();
+    const err = await resolvePayload(
+      createEnv(kv),
+      message({ payload: undefined, payloadRef: "queue:payload:fresh" }),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(PayloadUnavailableError);
+  });
+
+  it("throws when the parked payload is corrupt", async () => {
+    const { kv, store } = createMockKV();
+    store.set("queue:payload:bad", "{not json");
+    await expect(
+      resolvePayload(
+        createEnv(kv),
+        message({ payload: undefined, payloadRef: "queue:payload:bad" }),
+      ),
+    ).rejects.toBeInstanceOf(PayloadUnavailableError);
   });
 
   it("deletes the payloadRef on discard", async () => {
@@ -207,5 +283,24 @@ describe("resolvePayload / discardPayload", () => {
     store.set("queue:payload:github:global:d1", "{}");
     await discardPayload(createEnv(kv), message({ payloadRef: "queue:payload:github:global:d1" }));
     expect(store.has("queue:payload:github:global:d1")).toBe(false);
+  });
+});
+
+describe("markDeliveryDead", () => {
+  it("never overwrites a finished delivery or a live lease", async () => {
+    const { db, sqlite } = createSqliteD1();
+    const env: Env = { GITHUB_WEBHOOK_SECRET: "", KV: createMemoryKV().kv, DB: db };
+    const now = Date.now();
+    sqlite.exec(
+      `INSERT INTO delivery_state (key, status, updated_at) VALUES
+        ('done', 'delivered', ${now}), ('live', 'processing', ${now}),
+        ('stale', 'processing', ${now - 3600_000}), ('waiting', 'retrying', ${now})`,
+    );
+    for (const key of ["done", "live", "stale", "waiting", "new"]) await markDeliveryDead(env, key);
+    expect(await getDeliveryState(env, "done")).toBe("delivered");
+    expect(await getDeliveryState(env, "live")).toBe("processing");
+    expect(await getDeliveryState(env, "stale")).toBe("dead");
+    expect(await getDeliveryState(env, "waiting")).toBe("dead");
+    expect(await getDeliveryState(env, "new")).toBe("dead");
   });
 });
