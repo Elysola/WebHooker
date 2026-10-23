@@ -353,7 +353,8 @@ export async function updateCard(
   cardToken: string,
   card: Record<string, unknown>,
 ): Promise<SendResult> {
-  const url = `${FEISHU_API}/open-apis/interactive/v1/config/update`;
+  // Delayed update of an interactive card after a callback (`token` from it).
+  const url = `${FEISHU_API}/open-apis/interactive/v1/card/update`;
   const body: Record<string, unknown> = { token: cardToken, card };
   return feishuRequest(url, "POST", token, body, "card");
 }
