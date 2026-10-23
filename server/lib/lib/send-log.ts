@@ -1,10 +1,13 @@
 import { log } from "./log";
+import { isMissingTable } from "../storage/d1";
 
 export interface SendRecord {
   id?: number;
   ts: number;
   routeId: string;
   groupId?: string;
+  /** Immutable instance of the group (write-only: resolves `group_id` at insert time). */
+  groupInstance?: string;
   event: string;
   repo?: string;
   target: string;
@@ -104,14 +107,44 @@ export async function recordSend(db: D1Database, record: SendRecord): Promise<vo
   }
 }
 
-export async function getSendLog(db: D1Database, limit = 50): Promise<SendRecord[]> {
+/**
+ * Rows visible to a reader: every group (undefined), one group (a string) or
+ * a set of groups (an array — empty matches nothing). The condition is applied
+ * in SQL, before ordering and LIMIT, so another group's rows can neither leak
+ * into nor crowd out the reader's own.
+ */
+export type GroupScope = string | string[] | undefined;
+
+export function groupScopeClause(scope: GroupScope): { sql: string; args: string[] } | null {
+  if (scope === undefined) return null;
+  const ids = typeof scope === "string" ? [scope] : scope;
+  if (ids.length === 0) return { sql: "0", args: [] };
+  if (ids.length === 1) return { sql: "group_id = ?", args: ids };
+  // One JSON parameter, however many groups: D1 binds at most 100 per statement.
+  return {
+    sql: "group_id IN (SELECT value FROM json_each(?))",
+    args: [JSON.stringify(ids)],
+  };
+}
+
+export async function getSendLog(
+  db: D1Database,
+  limit = 50,
+  scope?: GroupScope,
+): Promise<SendRecord[]> {
   try {
+    const clause = groupScopeClause(scope);
     const { results } = await db
-      .prepare(`SELECT ${COLUMNS} FROM send_logs ORDER BY ts DESC LIMIT ?`)
-      .bind(limit)
+      .prepare(
+        `SELECT ${COLUMNS} FROM send_logs${clause ? ` WHERE ${clause.sql}` : ""} ORDER BY ts DESC LIMIT ?`,
+      )
+      .bind(...(clause?.args ?? []), limit)
       .all<LogRow>();
     return results.map(toRecord);
   } catch (err) {
+    // Only a table not created yet means "nothing yet"; any other failure
+    // must reach the caller, not pass for an empty history.
+    if (!isMissingTable(err)) throw err;
     log.warn({ err }, "Failed to load send log");
     return [];
   }
@@ -126,6 +159,9 @@ export async function getSendLogById(db: D1Database, id: number): Promise<SendRe
     const row = results[0];
     return row ? toRecord(row) : null;
   } catch (err) {
+    // Only a table not created yet means "nothing yet"; any other failure
+    // must reach the caller, not pass for an empty history.
+    if (!isMissingTable(err)) throw err;
     log.warn({ err, id }, "Failed to load send log entry");
     return null;
   }
@@ -142,37 +178,40 @@ export async function getSendLogByDelivery(
       .all<LogRow>();
     return results.map(toRecord);
   } catch (err) {
+    // Only a table not created yet means "nothing yet"; any other failure
+    // must reach the caller, not pass for an empty history.
+    if (!isMissingTable(err)) throw err;
     log.warn({ err, deliveryId }, "Failed to load send log by delivery");
     return [];
   }
 }
 
-/** The latest failed sends, optionally of one group (rows map with `toRecord`). */
+/** The latest failed sends within a group scope (rows map with `toRecord`). */
 export function failedSendLogStatement(
   db: D1Database,
   limit = 20,
-  groupId?: string,
+  scope?: GroupScope,
 ): D1PreparedStatement {
-  return groupId
-    ? db
-        .prepare(
-          `SELECT ${COLUMNS} FROM send_logs WHERE ok = 0 AND group_id = ? ORDER BY ts DESC LIMIT ?`,
-        )
-        .bind(groupId, limit)
-    : db
-        .prepare(`SELECT ${COLUMNS} FROM send_logs WHERE ok = 0 ORDER BY ts DESC LIMIT ?`)
-        .bind(limit);
+  const clause = groupScopeClause(scope);
+  return db
+    .prepare(
+      `SELECT ${COLUMNS} FROM send_logs WHERE ok = 0${clause ? ` AND ${clause.sql}` : ""} ORDER BY ts DESC LIMIT ?`,
+    )
+    .bind(...(clause?.args ?? []), limit);
 }
 
 export async function getFailedSendLog(
   db: D1Database,
   limit = 20,
-  groupId?: string,
+  groupId?: GroupScope,
 ): Promise<SendRecord[]> {
   try {
     const { results } = await failedSendLogStatement(db, limit, groupId).all<LogRow>();
     return results.map(toRecord);
   } catch (err) {
+    // Only a table not created yet means "nothing yet"; any other failure
+    // must reach the caller, not pass for an empty history.
+    if (!isMissingTable(err)) throw err;
     log.warn({ err }, "Failed to load failed send log");
     return [];
   }

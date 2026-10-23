@@ -22,7 +22,7 @@ import {
   clientIp,
   type GroupAccess,
 } from "./auth";
-import { getSendLog, getSendLogById, getSendLogByDelivery } from "../lib/send-log";
+import { getSendLog, getSendLogById, getSendLogByDelivery, type GroupScope } from "../lib/send-log";
 import { getDeliveryMetrics } from "../observability/metrics";
 import { getAuditLog, recordAudit } from "../lib/audit";
 import {
@@ -759,19 +759,25 @@ export async function adminApiRoutesPut(event: H3Event): Promise<Record<string, 
   return { ok: true, count: nextAll.length };
 }
 
+/** The groups whose history a reader may see: one group, theirs, or all (super). */
+function visibleScope(event: H3Event, groupId: string | undefined): GroupScope {
+  const auth = currentAuth(event);
+  if (groupId) return groupId;
+  return auth.scope.isSuper ? undefined : [...auth.scope.groupIds];
+}
+
 /** GET /admin/api/logs */
 export async function adminApiLogs(event: H3Event): Promise<Record<string, unknown>> {
   const auth = await requireAnyAccess(event);
   const env = cfEnv(event);
   const query = getQuery(event);
-  const limit = Math.min(Math.max(Number(String(query["limit"] ?? "50")), 1), 100);
+  const limit = Math.min(Math.max(Number(String(query["limit"] ?? "50")) || 50, 1), 100);
   const filterGroupId = String(query["groupId"] ?? "") || undefined;
-  const allLogs = await getSendLog(env.DB, 200);
-  const allowed = auth.scope.isSuper
-    ? allLogs
-    : allLogs.filter((l) => l.groupId != null && auth.scope.groupIds.has(l.groupId));
-  const logs = filterGroupId ? allowed.filter((l) => l.groupId === filterGroupId) : allowed;
-  return { logs: logs.slice(0, limit) };
+  if (filterGroupId && !auth.scope.isSuper && !auth.scope.groupIds.has(filterGroupId)) {
+    return respondError(event, 403, "Forbidden");
+  }
+  const logs = await getSendLog(env.DB, limit, visibleScope(event, filterGroupId));
+  return { logs };
 }
 
 /** GET /admin/api/logs/:id */
@@ -1080,16 +1086,13 @@ export async function adminAudit(event: H3Event): Promise<Record<string, unknown
   const auth = await requireAnyAccess(event);
   const env = cfEnv(event);
   const query = getQuery(event);
-  const limit = Math.min(Math.max(Number(String(query["limit"] ?? "50")), 1), 200);
+  const limit = Math.min(Math.max(Number(String(query["limit"] ?? "50")) || 50, 1), 200);
   const groupId = String(query["groupId"] ?? "") || undefined;
   if (groupId && !auth.scope.isSuper && !auth.scope.groupIds.has(groupId)) {
     return respondError(event, 403, "Forbidden");
   }
-  const entries = await getAuditLog(env.DB, { groupId, limit });
-  const visible = auth.scope.isSuper
-    ? entries
-    : entries.filter((e) => e.groupId != null && auth.scope.groupIds.has(e.groupId));
-  return { audit: visible };
+  const audit = await getAuditLog(env.DB, { groupId: visibleScope(event, groupId), limit });
+  return { audit };
 }
 
 /** GET /admin/api/metrics */
@@ -1101,16 +1104,10 @@ export async function adminApiMetrics(event: H3Event): Promise<Record<string, un
   if (groupId && !auth.scope.isSuper && !auth.scope.groupIds.has(groupId)) {
     return respondError(event, 403, "Forbidden");
   }
-  const metrics = await getDeliveryMetrics(env.DB, groupId);
-  if (auth.scope.isSuper) return { metrics };
-  return {
-    metrics: {
-      ...metrics,
-      recentFailures: metrics.recentFailures.filter(
-        (f) => f.groupId != null && auth.scope.groupIds.has(f.groupId),
-      ),
-    },
-  };
+  // Every aggregate (not only the failure list) is computed over the groups
+  // the reader may see; nobody but a super admin gets global totals.
+  const metrics = await getDeliveryMetrics(env.DB, visibleScope(event, groupId));
+  return { metrics };
 }
 
 /** GET /admin/api/delivery/:deliveryId */
@@ -1121,14 +1118,17 @@ export async function adminApiDelivery(
   const auth = await requireAnyAccess(event);
   const env = cfEnv(event);
   const rows = await getSendLogByDelivery(env.DB, deliveryId);
-  if (rows.length === 0) return respondError(event, 404, "Delivery not found");
-  if (
-    !auth.scope.isSuper &&
-    rows.some((r) => r.groupId == null || !auth.scope.groupIds.has(r.groupId))
-  ) {
-    return respondError(event, 403, "Forbidden");
-  }
-  return { deliveryId, attempts: rows };
+  // One delivery can fan out to several groups: show the reader their part.
+  // A delivery id is chosen by its sender, so two senders (two groups'
+  // endpoints) may use the same one: `?groupId=` narrows it to one group.
+  const only = getQuery(event)["groupId"];
+  const attempts = (
+    auth.scope.isSuper
+      ? rows
+      : rows.filter((r) => r.groupId != null && auth.scope.groupIds.has(r.groupId))
+  ).filter((r) => typeof only !== "string" || !only || r.groupId === only);
+  if (attempts.length === 0) return respondError(event, 404, "Delivery not found");
+  return { deliveryId, attempts };
 }
 
 function validateFragments(

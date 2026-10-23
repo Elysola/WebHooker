@@ -1,5 +1,13 @@
+import { isMissingTable } from "../storage/d1";
 import { log } from "../lib/log";
-import { failedSendLogStatement, toRecord, type LogRow, type SendRecord } from "../lib/send-log";
+import {
+  failedSendLogStatement,
+  groupScopeClause,
+  toRecord,
+  type GroupScope,
+  type LogRow,
+  type SendRecord,
+} from "../lib/send-log";
 
 export interface DeliveryMetrics {
   total: number;
@@ -18,6 +26,9 @@ export interface DeliveryMetrics {
 interface TotalsRow {
   total: number;
   ok: number;
+  avg: number | null;
+  attempts_total: number;
+  attempts_avg: number | null;
 }
 
 interface BreakdownRow {
@@ -29,15 +40,6 @@ interface BreakdownRow {
 interface StatusRow {
   status: number;
   count: number;
-}
-
-interface AvgRow {
-  avg: number | null;
-}
-
-interface AttemptsRow {
-  total: number;
-  avg: number | null;
 }
 
 const EMPTY: DeliveryMetrics = {
@@ -56,19 +58,26 @@ const EMPTY: DeliveryMetrics = {
 
 export async function getDeliveryMetrics(
   db: D1Database,
-  groupId?: string,
+  groupId?: GroupScope,
 ): Promise<DeliveryMetrics> {
-  const where = groupId ? " WHERE group_id = ?" : "";
-  const and = groupId ? " AND group_id = ?" : "";
+  const clause = groupScopeClause(groupId);
+  const where = clause ? ` WHERE ${clause.sql}` : "";
+  const and = clause ? ` AND ${clause.sql}` : "";
   const bindGroup = (stmt: D1PreparedStatement): D1PreparedStatement =>
-    groupId ? stmt.bind(groupId) : stmt;
+    clause && clause.args.length > 0 ? stmt.bind(...clause.args) : stmt;
 
   try {
-    // One round trip for all seven queries (each D1 call is a network hop), and
+    // One round trip for all five queries (each D1 call is a network hop), and
     // a batch runs as one transaction, so the totals and breakdowns agree.
     const results = await db.batch([
+      // Totals, average duration and attempts in one scan (AVG and SUM skip
+      // NULLs, as the separate filtered queries did).
       bindGroup(
-        db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(ok), 0) AS ok FROM send_logs${where}`),
+        db.prepare(
+          `SELECT COUNT(*) AS total, COALESCE(SUM(ok), 0) AS ok, AVG(duration_ms) AS avg,
+             COALESCE(SUM(attempts), 0) AS attempts_total, AVG(attempts) AS attempts_avg
+           FROM send_logs${where}`,
+        ),
       ),
       bindGroup(
         db.prepare(
@@ -88,17 +97,6 @@ export async function getDeliveryMetrics(
            WHERE status IS NOT NULL${and} GROUP BY status`,
         ),
       ),
-      bindGroup(
-        db.prepare(
-          `SELECT AVG(duration_ms) AS avg FROM send_logs WHERE duration_ms IS NOT NULL${and}`,
-        ),
-      ),
-      bindGroup(
-        db.prepare(
-          `SELECT COALESCE(SUM(attempts), 0) AS total, AVG(attempts) AS avg
-           FROM send_logs WHERE attempts IS NOT NULL${and}`,
-        ),
-      ),
       failedSendLogStatement(db, 20, groupId),
     ]);
     const rows = <T>(i: number): T[] => (results[i]?.results ?? []) as T[];
@@ -106,9 +104,7 @@ export async function getDeliveryMetrics(
     const byPlatform = rows<BreakdownRow>(1);
     const byEvent = rows<BreakdownRow>(2);
     const byStatus = rows<StatusRow>(3);
-    const duration = rows<AvgRow>(4);
-    const attempts = rows<AttemptsRow>(5);
-    const recentFailures = rows<LogRow>(6).map(toRecord);
+    const recentFailures = rows<LogRow>(4).map(toRecord);
 
     const total = Number(totals[0]?.total) || 0;
     const ok = Number(totals[0]?.ok) || 0;
@@ -132,12 +128,15 @@ export async function getDeliveryMetrics(
         status: String(r.status),
         count: Number(r.count) || 0,
       })),
-      avgDurationMs: Number(duration[0]?.avg) || 0,
-      totalAttempts: Number(attempts[0]?.total) || 0,
-      avgAttempts: Number(attempts[0]?.avg) || 0,
+      avgDurationMs: Number(totals[0]?.avg) || 0,
+      totalAttempts: Number(totals[0]?.attempts_total) || 0,
+      avgAttempts: Number(totals[0]?.attempts_avg) || 0,
       recentFailures,
     };
   } catch (err) {
+    // Only a table not created yet means "nothing yet"; any other failure
+    // must reach the caller, not pass for an empty history.
+    if (!isMissingTable(err)) throw err;
     log.warn({ err }, "Failed to compute delivery metrics");
     return EMPTY;
   }
