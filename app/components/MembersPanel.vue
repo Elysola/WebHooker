@@ -77,6 +77,9 @@
           {{ t("members.createInvite") }}
         </RcButton>
       </div>
+      <p v-if="invitesError" class="err">
+        {{ t("members.invitesFailed", { error: invitesError }) }}
+      </p>
       <ul v-if="invites.length" class="invite-list">
         <li v-for="inv in invites" :key="inv.token" class="invite-row">
           <code class="invite-token">{{ shortToken(inv.token) }}</code>
@@ -94,7 +97,7 @@
           </div>
         </li>
       </ul>
-      <p v-else class="empty-log">{{ t("members.noInvites") }}</p>
+      <p v-else-if="!invitesError" class="empty-log">{{ t("members.noInvites") }}</p>
     </div>
 
     <div class="err">{{ formError }}</div>
@@ -116,6 +119,8 @@ const emit = defineEmits<{ (e: "save", group: Group): void }>();
 const invitesApi = useInvitesApi();
 const members = ref<GroupMember[]>([]);
 const invites = ref<GroupInvite[]>([]);
+/** The last list load failed (the list shown, if any, is the one before). */
+const invitesError = ref("");
 const newLogin = ref("");
 const newRole = ref<GroupRole>("admin");
 const inviteRole = ref<"admin" | "viewer">("admin");
@@ -133,20 +138,34 @@ const inviteRoleOptions = computed(() =>
 
 watch(
   () => props.group,
-  (g) => {
+  (g, prev) => {
     // A group from before member roles lists its owners in `adminIds` only:
     // read as owners (as the server does), so a save never drops them.
     members.value = g.members?.length
       ? g.members.map((m) => ({ ...m }))
       : (g.adminIds ?? []).map((login) => ({ login, role: "owner" as const }));
     formError.value = "";
+    // Another group's invites are never shown, not even while loading.
+    if (g.id !== prev?.id) {
+      invites.value = [];
+      invitesError.value = "";
+    }
     if (props.canEdit) loadInvites();
   },
   { immediate: true },
 );
 
 async function loadInvites(): Promise<void> {
-  invites.value = await invitesApi.list(props.group.id);
+  const groupId = props.group.id;
+  try {
+    const list = await invitesApi.list(groupId);
+    if (props.group.id !== groupId) return;
+    invites.value = list;
+    invitesError.value = "";
+  } catch (err) {
+    if (props.group.id !== groupId) return;
+    invitesError.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 function ownerCount(): number {

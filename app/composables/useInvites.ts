@@ -21,6 +21,7 @@ export function useInvitesApi() {
     }
   }
 
+  /** Throws when the list cannot be read: never shown as "no invites". */
   async function list(groupId: string): Promise<GroupInvite[]> {
     loading.value = true;
     error.value = "";
@@ -31,7 +32,7 @@ export function useInvitesApi() {
       return data.invites ?? [];
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
-      return [];
+      throw err;
     } finally {
       loading.value = false;
     }
