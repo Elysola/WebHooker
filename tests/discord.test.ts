@@ -245,7 +245,8 @@ describe("dispatchEvent fallback routing", () => {
       route("omega-catch-all-2", "omega", { fallback: true, filters: [] }, "306"),
     ];
 
-    await dispatchEvent({ ...baseConfig, routes }, { event: "push", payload: {} }, env);
+    const groups = ["alpha", "zeta", "omega"].map((id) => ({ id, name: id, adminIds: [] }));
+    await dispatchEvent({ ...baseConfig, routes }, { event: "push", payload: {} }, env, groups);
     const hits = (channel: string): number => sent.filter((u) => u.includes(`/${channel}/`)).length;
     // alpha stops after its first match without silencing zeta.
     expect(hits("301")).toBe(1);
@@ -256,6 +257,52 @@ describe("dispatchEvent fallback routing", () => {
     expect(hits("304")).toBe(0);
     expect(hits("305")).toBe(1);
     expect(hits("306")).toBe(0);
+  });
+
+  it("never fires routes whose group no longer exists", async () => {
+    const sent: string[] = [];
+    mockFetch((url) => {
+      sent.push(url);
+      return new Response("{}", { status: 200 });
+    });
+    const env = createEnv({ KV: createMockKV(), DB: createMockDB() });
+    const routes: Route[] = [
+      {
+        id: "orphan",
+        name: "orphan",
+        enabled: true,
+        filters: [{ type: "event", match: "push" }],
+        targets: [{ channelId: "401" }],
+        groupId: "deleted",
+      },
+    ];
+    await dispatchEvent({ ...baseConfig, routes }, { event: "push", payload: {} }, env, []);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("keeps isolated groups off the global endpoint but serves their own ingress", async () => {
+    const sent: string[] = [];
+    mockFetch((url) => {
+      sent.push(url);
+      return new Response("{}", { status: 200 });
+    });
+    const env = createEnv({ KV: createMockKV(), DB: createMockDB() });
+    const routes: Route[] = [
+      {
+        id: "mine",
+        name: "mine",
+        enabled: true,
+        filters: [{ type: "event", match: "push" }],
+        targets: [{ channelId: "501" }],
+        groupId: "u-1",
+      },
+    ];
+    const groups = [{ id: "u-1", name: "me", adminIds: [], isolated: true }];
+    const event = { event: "push", payload: {} };
+    await dispatchEvent({ ...baseConfig, routes }, event, env, groups);
+    expect(sent).toHaveLength(0);
+    await dispatchEvent({ ...baseConfig, routes }, event, env, groups, { tenantId: "u-1" });
+    expect(sent.filter((u) => u.includes("/501/"))).toHaveLength(1);
   });
 
   it("prepends role mentions to the Discord message content", async () => {
