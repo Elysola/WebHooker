@@ -380,6 +380,22 @@ describe("kvConfigStore", () => {
     expect(JSON.parse(store.get("config:routes")!)).toEqual([]);
   });
 
+  it("repairs orphaned routes before a reused group id can inherit them", async () => {
+    const { kv, store } = createMemoryKV();
+    store.set("config:groups", JSON.stringify([group("current")]));
+    store.set(
+      "config:routes",
+      JSON.stringify([route("orphan", "reused"), route("live", "current")]),
+    );
+    const cfg = kvConfigStore(kv);
+
+    expect((await cfg.loadRoutes()).map((r) => r.id)).toEqual(["live"]);
+    expect(JSON.parse(store.get("config:routes")!)).toEqual([route("live", "current")]);
+
+    await expect(cfg.createGroup(group("reused"))).resolves.toBe(true);
+    expect((await cfg.loadRoutes()).map((r) => r.id)).toEqual(["live"]);
+  });
+
   it("backfills the same instance whichever cold start wins the race", async () => {
     const { kv, store } = createMemoryKV();
     store.set("config:groups", JSON.stringify([group("legacy")]));

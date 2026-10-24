@@ -1147,7 +1147,22 @@ export function kvConfigStore(kv: KVNamespace): ConfigStore {
     const raw = await kv.get<T[]>(key, "json");
     return Array.isArray(raw) ? raw : [];
   }
-  const loadRoutes = async (): Promise<Route[]> => migrateRoutes(await readList(KV_ROUTES_KEY));
+  /**
+   * KV has no transaction spanning the group and route lists. A rename can
+   * therefore be interrupted between its writes, leaving routes under an id
+   * that is no longer a group (or under the new id before that group exists).
+   * Never serve those orphaned routes: they could otherwise be inherited by a
+   * later group that reuses the id. Repair the permanent route list while it
+   * is read so every public load path gets the same safety boundary.
+   */
+  const loadRoutes = async (): Promise<Route[]> => {
+    const routes = migrateRoutes(await readList<Route>(KV_ROUTES_KEY));
+    const groups = migrateGroups(await readList<Group>(KV_GROUPS_KEY));
+    const groupIds = new Set(groups.map((g) => g.id));
+    const kept = routes.filter((route) => !route.groupId || groupIds.has(route.groupId));
+    if (kept.length !== routes.length) await kv.put(KV_ROUTES_KEY, JSON.stringify(kept));
+    return kept;
+  };
   let identitiesMigrated = false;
   const loadGroups = async (): Promise<Group[]> => {
     let groups = migrateGroups(await readList<Group>(KV_GROUPS_KEY));
