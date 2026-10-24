@@ -33,7 +33,10 @@ function colorToTemplate(color?: number): FeishuTemplate {
  * up (a zero-width space after `<`) and shows as text.
  */
 function noMentions(content: string): string {
-  return content.replace(/<(\/?)(at)\b/gi, "<\u200b$1$2");
+  // Escape every angle bracket, not only `<at`. Replacing just the mention
+  // prefix still leaves values such as `<script` in Feishu markdown, where an
+  // incomplete tag can be interpreted as HTML by the client.
+  return content.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function mdText(content: string): { tag: "lark_md"; content: string } {

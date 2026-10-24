@@ -1556,6 +1556,19 @@ describe("round 30", () => {
     expect(/<\/?at\b/i.test(card)).toBe(false);
   });
 
+  it("does not leave HTML tag prefixes in Feishu markdown", async () => {
+    const { renderNeutralMessage } = await import("../server/lib/drivers/feishu/render");
+    const card = JSON.stringify(
+      renderNeutralMessage({
+        title: "repo: <script>alert(1)</script>",
+        description: "<script>alert(2)",
+        footer: "<img src=x>",
+      }),
+    );
+    expect(card).not.toContain("<script");
+    expect(card).not.toContain("<img");
+  });
+
   it("reads a delivery's finished targets in one query", async () => {
     const { markTargetsDone, targetDoneChecker } = await import("../server/lib/queue/delivery");
     const { db } = createSqliteD1();

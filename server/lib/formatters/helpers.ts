@@ -207,7 +207,11 @@ function stripHtml(input: string): string {
     .replace(/<\/(p|div|tr|h[1-6]|ul|ol|table|blockquote)>/gi, "\n")
     .replace(/<\/t[dh]>/gi, "  ")
     .replace(/<li[^<>]*>/gi, "\n• ")
-    .replace(/<[^<>]+>/g, "");
+    // A prefix such as `<script` is still dangerous when the closing `>` is
+    // absent or is supplied later by a renderer. Remove the opening bracket
+    // itself after known HTML has been converted to text.
+    .replace(/<[^<>]+>/g, "")
+    .replace(/</g, "");
   out = out
     .replace(/&nbsp;/gi, " ")
     .replace(/&lt;/gi, "<")
