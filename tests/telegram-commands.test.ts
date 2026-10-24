@@ -330,7 +330,7 @@ describe("telegram-commands refusals and whitespace", () => {
     let replies = 0;
     let github = 0;
     mockFetch((url) => {
-      if (url.includes("api.github.com")) github++;
+      if (new URL(url).hostname === "api.github.com") github++;
       replies++;
       return new Response(JSON.stringify({ ok: false, description: "Bad Gateway" }), {
         status: 502,

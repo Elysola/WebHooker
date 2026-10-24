@@ -151,7 +151,7 @@ describe("discord interactions", () => {
       const url = String(input);
       if (url.includes("/callback")) {
         order.push(`callback:${(JSON.parse(String(init?.body)) as { type: number }).type}`);
-      } else if (url.includes("api.github.com")) {
+      } else if (new URL(url).hostname === "api.github.com") {
         order.push("github");
         return new Response(
           JSON.stringify({ html_url: "https://github.com/o/r/issues/7#c", user: { login: "a" } }),
@@ -203,7 +203,7 @@ describe("discord interactions", () => {
         components: [{ components: [{ custom_id: "body", value: "hello" }] }],
       },
     });
-    expect(calls.some((u) => u.includes("api.github.com"))).toBe(false);
+    expect(calls.some((u) => new URL(u).hostname === "api.github.com")).toBe(false);
   });
 
   it("refuses to save an edit over changes made on GitHub after the modal opened", async () => {

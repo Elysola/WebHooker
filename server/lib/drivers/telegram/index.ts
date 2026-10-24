@@ -7,7 +7,7 @@ import { renderNeutralMessage } from "./render";
 const markdown = new MarkdownIt({ html: false, linkify: false, breaks: false, typographer: false });
 
 function markdownToText(value: string): string {
-  return markdown.renderInline(value).replace(/<[^>]*>/gu, "");
+  return markdown.renderInline(value).replace(/<[^>]*>/gu, "").replace(/</g, "");
 }
 
 function smallAvatar(url: string): string {

@@ -218,6 +218,9 @@ function stripHtml(input: string): string {
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&apos;/gi, "'")
+    // Entity decoding can reveal a tag prefix after the first pass. Remove
+    // angle brackets again so encoded `<script` cannot survive sanitization.
+    .replace(/</g, "")
     .replace(/&#x([0-9a-f]+);/gi, (m, hex: string) => codePoint(parseInt(hex, 16), m))
     .replace(/&#(\d+);/g, (m, dec: string) => codePoint(Number(dec), m))
     .replace(/&amp;/gi, "&");

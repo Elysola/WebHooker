@@ -74,7 +74,7 @@ function capHtml(text: string, max: number): string {
     const weight = entity ? 1 : step;
     // One character is kept for the ellipsis.
     if (shown + weight > max - 1) {
-      const rest = text.slice(i).replace(/<[^>]*>/g, "");
+      const rest = text.slice(i).replace(/<[^>]*>/g, "").replace(/</g, "");
       // What is left fits after all (no ellipsis needed).
       if (shown + rest.replace(/&(?:#\d+|#x[0-9a-f]+|[a-z]+);/gi, "x").length <= max) return text;
       const closers = [...stack]

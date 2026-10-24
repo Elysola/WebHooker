@@ -657,7 +657,7 @@ describe("dispatchEvent fallback routing", () => {
     const sent: string[] = [];
     const bodies: string[] = [];
     mockFetch((url, init) => {
-      if (url.includes("api.github.com") && url.includes("/jobs")) {
+      if (new URL(url).hostname === "api.github.com" && url.includes("/jobs")) {
         return Response.json({
           jobs: [
             {
