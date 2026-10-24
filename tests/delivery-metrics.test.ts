@@ -5,7 +5,8 @@ import {
   getFailedSendLog,
   type SendRecord,
 } from "../server/lib/lib/send-log";
-import { adminApiMetrics, adminApiDelivery } from "../server/lib/web/admin";
+import { adminApiMetrics, adminApiDelivery, adminApiLogs } from "../server/lib/web/admin";
+import { createSqliteD1 } from "./d1-sqlite";
 import { createAdminSession, adminCookie } from "../server/lib/web/session";
 import { invalidateGroupsCache } from "../server/lib/web/groups";
 import { makeEvent, responseStatus } from "./helpers";
@@ -95,6 +96,8 @@ const logRow = (overrides: Record<string, unknown> = {}): Record<string, unknown
 describe("delivery metrics", () => {
   it("aggregates send_logs into metrics", async () => {
     const db = createMetricsDB({
+      // Totals, average duration and attempts come from one scan.
+      attempts_total: [{ total: 10, ok: 8, avg: 120.5, attempts_total: 12, attempts_avg: 1.2 }],
       "platform AS key": [
         { key: "discord", total: 7, ok: 6 },
         { key: "telegram", total: 3, ok: 2 },
@@ -104,10 +107,7 @@ describe("delivery metrics", () => {
         { status: "200", count: 8 },
         { status: "500", count: 2 },
       ],
-      "AVG(duration_ms)": [{ avg: 120.5 }],
-      "SUM(attempts)": [{ total: 12, avg: 1.2 }],
       "ok = 0": [logRow({ ok: 0, status: 500, error_code: "DISCORD_5XX" })],
-      "COUNT(*) AS total": [{ total: 10, ok: 8 }],
     });
     const m = await getDeliveryMetrics(db);
     // Every query goes out in a single batch (one D1 round trip).
@@ -166,70 +166,106 @@ describe("delivery metrics", () => {
   });
 });
 
+describe("delivery metrics (SQLite)", () => {
+  it("averages duration and attempts over the rows that have them, in one scan", async () => {
+    const { db, sqlite } = createSqliteD1();
+    const insert = sqlite.prepare(
+      "INSERT INTO send_logs (ts, route_id, group_id, event, target, ok, duration_ms, attempts) VALUES (?, 'r', 'g', 'push', 't', ?, ?, ?)",
+    );
+    insert.run(1, 1, 100, 1);
+    insert.run(2, 0, 300, 3);
+    insert.run(3, 1, null, null);
+    const m = await getDeliveryMetrics(db);
+    expect(m.total).toBe(3);
+    expect(m.ok).toBe(2);
+    expect(m.avgDurationMs).toBe(200);
+    expect(m.totalAttempts).toBe(4);
+    expect(m.avgAttempts).toBe(2);
+  });
+});
+
 describe("admin metrics/delivery handlers", () => {
   beforeEach(() => invalidateGroupsCache());
-  it("returns global metrics for super admins", async () => {
+
+  /** A real (SQLite) D1 with two groups and send logs in both. */
+  function seeded(): { env: Env; kv: KVNamespace } {
+    const { db, sqlite } = createSqliteD1();
     const kv = createMockKV();
-    const db = createMetricsDB({ "COUNT(*) AS total": [{ total: 5, ok: 4 }] });
-    const env = createEnv({ KV: kv, DB: db, ADMIN_USER_IDS: "1001" });
-    const sid = await createAdminSession(kv, "1001", "alice");
-    const event = makeEvent("/api/metrics", { headers: { cookie: adminCookie(sid) }, env });
+    const insert = sqlite.prepare(
+      "INSERT INTO send_logs (ts, route_id, group_id, event, target, ok, delivery_id, error_code) VALUES (?, 'r', ?, 'push', 't', ?, ?, ?)",
+    );
+    insert.run(1, "mine", 1, "d1", null);
+    insert.run(2, "mine", 0, "d1", "NETWORK");
+    insert.run(3, "theirs", 0, "d1", "NETWORK");
+    insert.run(4, "theirs", 1, "d2", null);
+    insert.run(5, "theirs", 1, "d3", null);
+    const groups = [
+      { id: "mine", name: "Mine", adminIds: [], members: [{ login: "bob", role: "owner" }] },
+      { id: "theirs", name: "Theirs", adminIds: [], members: [{ login: "eve", role: "owner" }] },
+    ];
+    for (const g of groups) {
+      sqlite
+        .prepare(
+          "INSERT INTO d1_groups (id, name, data, version, created_at, updated_at) VALUES (?, ?, ?, 1, 0, 0)",
+        )
+        .run(g.id, g.name, JSON.stringify(g));
+    }
+    return { env: createEnv({ KV: kv, DB: db, ADMIN_USER_IDS: "1001" }), kv };
+  }
+
+  async function as(kv: KVNamespace, userId: string, login: string): Promise<string> {
+    return adminCookie(await createAdminSession(kv, userId, login));
+  }
+
+  it("returns global metrics for super admins", async () => {
+    const { env, kv } = seeded();
+    const cookie = await as(kv, "1001", "alice");
+    const event = makeEvent("/api/metrics", { headers: { cookie }, env });
     const res = (await adminApiMetrics(event)) as { metrics: { total: number } };
     expect(responseStatus(event)).toBe(200);
     expect(res.metrics.total).toBe(5);
   });
 
-  it("filters recentFailures for non-super users", async () => {
-    const kv = createMockKV();
-    await kv.put(
-      "config:groups",
-      JSON.stringify([
-        { id: "mine", name: "Mine", adminIds: [], members: [{ login: "bob", role: "owner" }] },
-      ]),
-    );
-    const db = createMetricsDB({
-      "ok = 0": [logRow({ ok: 0, group_id: "mine" }), logRow({ ok: 0, group_id: "theirs" })],
-      "COUNT(*) AS total": [{ total: 1, ok: 0 }],
-    });
-    const env = createEnv({ KV: kv, DB: db });
-    const sid = await createAdminSession(kv, "2002", "bob");
-    const event = makeEvent("/api/metrics", { headers: { cookie: adminCookie(sid) }, env });
+  it("scopes every aggregate to the reader's groups", async () => {
+    const { env, kv } = seeded();
+    const cookie = await as(kv, "2002", "bob");
+    const event = makeEvent("/api/metrics", { headers: { cookie }, env });
     const res = (await adminApiMetrics(event)) as {
-      metrics: { recentFailures: Array<{ groupId?: string }> };
+      metrics: { total: number; failed: number; recentFailures: Array<{ groupId?: string }> };
     };
-    expect(res.metrics.recentFailures).toHaveLength(1);
-    expect(res.metrics.recentFailures[0]!.groupId).toBe("mine");
+    expect(res.metrics.total).toBe(2);
+    expect(res.metrics.failed).toBe(1);
+    expect(res.metrics.recentFailures.map((f) => f.groupId)).toEqual(["mine"]);
   });
 
   it("returns 404 for an unknown delivery", async () => {
-    const kv = createMockKV();
-    const env = createEnv({
-      KV: kv,
-      DB: createMetricsDB({ delivery_id: [] }),
-      ADMIN_USER_IDS: "1001",
-    });
-    const sid = await createAdminSession(kv, "1001", "alice");
-    const event = makeEvent("/api/delivery/nope", { headers: { cookie: adminCookie(sid) }, env });
+    const { env, kv } = seeded();
+    const cookie = await as(kv, "1001", "alice");
+    const event = makeEvent("/api/delivery/nope", { headers: { cookie }, env });
     const res = (await adminApiDelivery(event, "nope")) as { error?: string };
     expect(responseStatus(event)).toBe(404);
     expect(res.error).toBe("Delivery not found");
   });
 
-  it("returns correlated attempts for a delivery", async () => {
-    const kv = createMockKV();
-    const db = createMetricsDB({
-      delivery_id: [logRow({ id: 1, ok: 1, delivery_id: "d1" })],
-    });
-    const env = createEnv({ KV: kv, DB: db, ADMIN_USER_IDS: "1001" });
-    const sid = await createAdminSession(kv, "1001", "alice");
-    const event = makeEvent("/api/delivery/d1", { headers: { cookie: adminCookie(sid) }, env });
+  it("shows a reader only their groups' attempts of a shared delivery", async () => {
+    const { env, kv } = seeded();
+    const cookie = await as(kv, "2002", "bob");
+    const event = makeEvent("/api/delivery/d1", { headers: { cookie }, env });
     const res = (await adminApiDelivery(event, "d1")) as {
-      deliveryId?: string;
-      attempts?: Array<{ deliveryId?: string }>;
+      attempts?: Array<{ groupId?: string }>;
     };
     expect(responseStatus(event)).toBe(200);
-    expect(res.deliveryId).toBe("d1");
-    expect(res.attempts).toHaveLength(1);
-    expect(res.attempts![0]!.deliveryId).toBe("d1");
+    expect(res.attempts!.map((a) => a.groupId)).toEqual(["mine", "mine"]);
+    const other = makeEvent("/api/delivery/d2", { headers: { cookie }, env });
+    await adminApiDelivery(other, "d2");
+    expect(responseStatus(other)).toBe(404);
+  });
+
+  it("lists logs of the reader's groups even when others are newer", async () => {
+    const { env, kv } = seeded();
+    const cookie = await as(kv, "2002", "bob");
+    const event = makeEvent("/api/logs?limit=2", { headers: { cookie }, env });
+    const res = (await adminApiLogs(event)) as { logs: Array<{ groupId?: string }> };
+    expect(res.logs.map((l) => l.groupId)).toEqual(["mine", "mine"]);
   });
 });

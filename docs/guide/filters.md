@@ -124,16 +124,17 @@ This fires when a pull request is opened or reopened (and not on merge/close/edi
 
 Matches the branch involved in the event. What counts as "the branch" depends on the event type:
 
-| Event                       | Branch extracted                            |
-| --------------------------- | ------------------------------------------- |
-| `push`                      | The branch that was pushed to               |
-| `pull_request` (and review) | The pull request's **head** (source) branch |
-| `create` / `delete`         | The created/deleted branch or tag           |
-| `workflow_run`              | The `head_branch` the workflow ran on       |
-| `workflow_job`              | The `head_branch` the job ran on            |
-| `check_suite`               | The `head_branch` of the check suite        |
-| `deployment`                | The deployment ref (strips `refs/heads/`)   |
-| `code_scanning_alert`       | The branch the alert belongs to             |
+| Event                              | Branch extracted                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------ |
+| `push`                             | The branch that was pushed to                                                        |
+| `pull_request` (and review)        | The pull request's **head** (source) branch                                          |
+| `create` / `delete`                | The created/deleted branch or tag                                                    |
+| `workflow_run`                     | The `head_branch` the workflow ran on                                                |
+| `workflow_job`                     | The `head_branch` the job ran on                                                     |
+| `check_run`                        | The `head_branch` of the run's check suite                                           |
+| `check_suite`                      | The `head_branch` of the check suite                                                 |
+| `deployment` / `deployment_status` | The deployment ref (`deployment.ref`, strips a leading `refs/heads/`)                |
+| `code_scanning_alert`              | The alert's ref, without a leading `refs/heads/` (use `main`, not `refs/heads/main`) |
 
 ```json
 {
@@ -179,8 +180,9 @@ Fires when the payload contains `deploy` anywhere. Because the payload is lowerc
 
 Behavior details:
 
-- Patterns longer than 200 characters are **not** compiled as glob/regex and fall back to plain matching.
-- A `//`-wrapped pattern that is not a valid regex matches **nothing** (the filter stays false) rather than erroring.
+- Patterns longer than 200 characters cannot be compiled as glob/regex; such patterns are rejected when saved.
+- Globs and regular expressions run on the RE2 engine, whose matching time is linear in the input — no pattern can stall the worker. RE2 syntax has no backreferences (`\1`) or lookaround (`(?=…)`, `(?<!…)`); the console and API reject such patterns.
+- A `//`-wrapped pattern that is not a valid regex is rejected when saved.
 - To search for text that is a glob or regex special character (e.g. `v1.2.3`), rely on the plain-text form — a pattern without `*`, `?`, or `//` wrapping matches literally.
 - The search covers the **entire** payload: commit messages, PR titles and bodies, labels, refs, even repository and sender names.
 
@@ -221,7 +223,7 @@ Field filters (and every filter type except `keyword`) accept an `op` to change 
 | `gt` / `gte`   | Numeric greater-than / greater-or-equal                 |
 | `lt` / `lte`   | Numeric less-than / less-or-equal                       |
 | `in`           | Value equals any of the listed patterns                 |
-| `exists`       | The field is present (non-null); `match` is ignored     |
+| `exists`       | The field is present (non-null); `match` may be omitted |
 
 ```json
 { "type": "field", "path": "pull_request.commits", "op": "gt", "match": "1" }
@@ -239,6 +241,9 @@ A route can use a nested `ast` to combine filters with explicit grouping instead
 {
   "id": "grouped",
   "name": "Grouped",
+  "enabled": true,
+  "groupId": "eng",
+  "filters": [],
   "ast": {
     "all": [
       { "type": "event", "match": "pull_request" },
@@ -250,11 +255,11 @@ A route can use a nested `ast` to combine filters with explicit grouping instead
       }
     ]
   },
-  "targets": [{ "channelId": "..." }]
+  "targets": [{ "platform": "discord", "channelId": "..." }]
 }
 ```
 
-When `ast` is present it takes precedence over `filters`. The admin console's route editor builds `ast` visually (all/any/not groups), shows a live explanation of the tree, and can test it against a pasted JSON payload via the **Test match** panel.
+When `ast` is present it takes precedence over `filters`; the route still carries a `filters` array (it may be empty). The admin console's route editor builds `ast` visually (all/any/not groups), shows a live explanation of the tree, and can test it against a pasted JSON payload via the **Test match** panel.
 
 Values, field paths and the test event use searchable dropdowns. Suggestions come from GitHub's and Gitea's webhook definitions — events, the actions of the events the route filters on, common payload paths and their known values — each shown as its English key with a description in the console language; search matches the key first, then the English or Chinese description. Anything outside the list can still be typed and is validated before it is added; only values that can never match are rejected (an event name with spaces, a branch with characters git forbids, invalid regex syntax, a non-number for a comparison operator, …). Repository and actor values stay free-form because custom webhooks may carry any string. Text that is typed but not added with <kbd>Enter</kbd> blocks saving, fragment saving and test runs instead of being added or dropped silently. Several values can be typed or pasted at once, separated by commas or new lines; a `/regex/` keeps its own commas, and with the **matches regex** (`regex`) operator only new lines separate values (a raw pattern such as `^v{1,3}` may contain commas). Suggestions follow the operator: the substring operators compare text literally, so a glob suggestion becomes the text it implies (`release/*` → `release/` for **starts with**, `*[bot]` → `[bot]` for **ends with**), **matches regex** offers each suggestion as the escaped, anchored pattern it means (`^dependabot\[bot\]$`, `^release/`), and comparison operators get no suggestions. Switching between **equals** / **not equals** / **in** and **matches regex** rewrites `/x/` ↔ `x` in the values already added — both forms compile to the same regular expression, so the condition keeps matching exactly the same. Other values stay as typed (literal, glob and substring comparisons differ from regular expressions on line breaks and Unicode case folding), and values that can never match under the new operator are flagged. Arrays are expanded along a `field` path, but a path that **ends** on an array (e.g. `commits.modified`) is compared as a whole — match one of its elements with `contains`; the editor switches to `contains` when such a suggested path is picked.
 
@@ -275,13 +280,13 @@ Forward pull request activity, but ignore bot authors and draft PRs, to a `#prs`
   "filters": [
     { "type": "event", "match": "pull_request" },
     { "type": "actor", "match": "dependabot[bot]", "exclude": true },
-    { "type": "keyword", "match": "\"draft\": true", "exclude": true }
+    { "type": "field", "path": "pull_request.draft", "match": "true", "exclude": true }
   ],
-  "target": { "channelId": "111111111111111111" }
+  "targets": [{ "platform": "discord", "channelId": "111111111111111111" }]
 }
 ```
 
-The `"draft": true` pattern matches the `draft` field that GitHub includes in pull request payloads; combined with `exclude: true` it filters out draft PRs.
+The `field` filter reads `pull_request.draft` from the payload; combined with `exclude: true` it filters out draft PRs.
 
 ## Worked Example 2: Release-only channel
 
@@ -298,7 +303,7 @@ Forward only published releases from a specific repo:
     { "type": "action", "match": "published" },
     { "type": "repo", "match": "myorg/backend" }
   ],
-  "target": { "channelId": "222222222222222222" }
+  "targets": [{ "platform": "discord", "channelId": "222222222222222222" }]
 }
 ```
 
@@ -317,14 +322,14 @@ Forward workflow runs that ended in failure on any branch, to a `#ci` channel:
     { "type": "action", "match": "completed" },
     { "type": "keyword", "match": "\"conclusion\":\"failure\"" }
   ],
-  "target": { "channelId": "333333333333333333" }
+  "targets": [{ "platform": "discord", "channelId": "333333333333333333" }]
 }
 ```
 
 ## Common Pitfalls
 
 - **Wildcards are globs, not regex.** `repo: "myorg/*"` matches any repo under `myorg` (and `myorg/sub/backend`), but `repo: "myorg/.*"` matches literally. Use `//` wrapping for regex: `"/myorg\/.*/"`.
-- **A `//`-wrapped invalid regex never matches.** Unlike plain text, an unwrapped invalid pattern is matched literally — wrap patterns only when they are real regular expressions.
+- **A `//`-wrapped invalid regex is rejected.** The console and API refuse it when saved; a route stored with one before is reported as [unreadable](./routes#unreadable-routes) and its group's deliveries retry until it is fixed. Unlike `//`-wrapped text, an unwrapped pattern is matched literally — wrap patterns only when they are real regular expressions.
 - **An `action` filter on an action-less event never matches.** Check the event has an `action` field first (see [Filter Compatibility](../events/supported#filter-compatibility)).
 - **`branch` on an event without a branch never matches.** A `branch` filter on an `issues` event will always be false. Use `keyword` if you need branch-like matching there.
 - **`keyword` searches everything.** Because it scans the whole payload, a pattern like `"fix"` can match commit messages, issue titles, _and_ repository names. Be as specific as possible.

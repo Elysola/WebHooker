@@ -28,8 +28,21 @@ export function formatEvent(
 
   const ctx: FormatContext = { payload, repo, repoUrl, author, t, showEmoji };
 
-  return (
+  const message =
     findFormatter(eventType)?.format(ctx) ??
-    formatGeneric(eventType, payload, repo, author, t, showEmoji)
-  );
+    formatGeneric(eventType, payload, repo, author, t, showEmoji);
+  // Action buttons (merge / close) call the github.com API with the clicker's
+  // token: on any other forge they would act on a same-named GitHub repository.
+  if (message.actions && !isGitHubDotCom(event.provider, repoUrl)) delete message.actions;
+  return message;
+}
+
+function isGitHubDotCom(provider: string | undefined, repoUrl: string | undefined): boolean {
+  if ((provider ?? "github") !== "github") return false;
+  if (!repoUrl) return true;
+  try {
+    return new URL(repoUrl).hostname.toLowerCase() === "github.com";
+  } catch {
+    return false;
+  }
 }

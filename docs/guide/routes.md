@@ -1,8 +1,8 @@
 # Routes & Targets
 
-Routes define which events get forwarded to which channel (Discord or Telegram). They are stored in D1 (`d1_routes`, seeded from the legacy KV `config:routes` key on first load), managed via the [Web UI](./configuration#web-ui), the [Admin API](../api/admin), or `config.example.yaml`.
+Routes define which events get forwarded to which channel (Discord or Telegram). They are stored in D1 (`d1_routes`, seeded from the legacy KV `config:routes` key on first load), managed via the [Web UI](./configuration#web-ui) or the [Admin API](../api/admin). `config.example.yaml` shows the schema as YAML; the worker does not load it.
 
-There are **no default routes** — each route must define its own target. If no routes are configured, no events are forwarded. At most **200 routes** can be saved per instance.
+There are **no default routes** — each route must define its own target. If no routes are configured, no events are forwarded. One save accepts at most **200 routes**.
 
 ## Route Schema
 
@@ -29,14 +29,20 @@ There are **no default routes** — each route must define its own target. If no
 }
 ```
 
-Each entry of `targets` is a push destination, so one route can forward to several channels at once (e.g. a Discord channel **and** a Telegram group). `target.platform` selects the platform: `discord` (default), `telegram` or `feishu`. For **Discord**, `target.channelId` is required (a thread in `target.threadId` is optional). For **Telegram** and **Feishu**, `target.chatId` (the group/supergroup chat id, e.g. `-1001234567890`) is required and `target.topicId` (the `message_thread_id` of a topic, equivalent of a Discord thread) is optional. There is no fallback to a default channel.
+Each entry of `targets` is a push destination, so one route can forward to several channels at once (e.g. a Discord channel **and** a Telegram group). `target.platform` selects the platform: `discord` (default), `telegram` or `feishu`. For **Discord**, `target.channelId` is required (a thread in `target.threadId` is optional). For **Telegram**, `target.chatId` (the group/supergroup chat id, e.g. `-1001234567890`) is required and `target.topicId` (the `message_thread_id` of a topic, equivalent of a Discord thread) is optional. For **Feishu**, `target.chatId` (the group's chat id, `oc_…`) is required; Feishu targets have no topic. There is no fallback to a default channel.
+
+Target ids are validated so that every destination has exactly one spelling (otherwise the cross-group ownership check could be bypassed):
+
+- **Discord** — `channelId` / `threadId` use only `A–Z a–z 0–9 _ -` (up to 64 characters); numeric ids have no leading zero.
+- **Telegram** — `chatId` is the numeric chat id in canonical form (no leading zeros, at most 15 digits; `@username` is not accepted); `topicId` is a positive integer up to 2147483647.
+- A route cannot list the same destination twice: `{ "channelId": T }` and `{ "channelId": P, "threadId": T }` both send to thread `T` and count as one destination, as do Telegram topic ids written differently.
 
 | Field            | Type     | Required | Description                                                                                                       |
 | ---------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
 | `groupId`        | string   | Yes      | Id of the [group](./groups) this route belongs to                                                                 |
 | `fallback`       | boolean  | No       | When `true`, fires only if no non-fallback route of the same group matched the event; its filters still apply     |
 | `stop`           | boolean  | No       | When `true` and this route matches, no further routes of the same group are evaluated for this event              |
-| `discordRoleIds` | string[] | No       | Discord role ids to ping when this route fires; applied to Discord targets only                                   |
+| `discordRoleIds` | string[] | No       | Discord role ids to ping when this route fires (at most 50); applied to Discord targets only                      |
 | `ast`            | object   | No       | Boolean filter tree (`{all:[...]}` / `{any:[...]}` / `{not:{...}}`); takes precedence over `filters` when present |
 
 ## Route Order
@@ -44,6 +50,10 @@ Each entry of `targets` is a push destination, so one route can forward to sever
 Routes are evaluated in the order the console shows them, group by group. `stop` and `fallback` act within a group: a matching `stop` route skips the later routes of its own group only, and a group's fallback routes stay silent only when one of that group's regular routes matched — one group never silences another. To change it, click **Reorder** on the group page, drag routes by their handle (or focus a handle and press <kbd>↑</kbd> / <kbd>↓</kbd>), then **Save order**. The order is stored per group in D1 (`d1_routes.position`, migration `0012`); a database without that migration keeps loading routes in id order.
 
 **Upgrade note:** If your configuration relied on `stop` in one group preventing routes in another group from running, or on a regular route match in one group suppressing fallback sends in another, review your existing routes when upgrading. These effects now apply only within the same group, so routes in other groups may start sending. Move routes that need to be mutually exclusive into the same group, then check their order and `stop` / `fallback` settings.
+
+## Unreadable Routes
+
+A stored route that cannot be read — corrupt JSON, a field of the wrong shape, an invalid filter, or a pattern the matcher cannot compile (for example a lookahead regex written for another engine) — is never treated as "no match". The group's deliveries fail visibly and are retried (every other group is unaffected), and `GET /admin/api/groups/:id/routes` reports `unreadable: true`. Saving the group's routes is refused while such a row exists, so it is never deleted unseen; to replace it on purpose, send the save with `discardUnreadable: true`.
 
 ## Discord Role Mentions
 
@@ -79,13 +89,13 @@ Every route carries a `filters` array (all must match — AND logic). When the r
     "filters": [
       { "type": "repo", "match": "myorg/backend" },
       { "type": "event", "match": "pull_request" },
-      { "type": "actor", "match": "[bot]", "exclude": true }
+      { "type": "actor", "match": "*[bot]", "exclude": true }
     ],
     "targets": [
       {
         "platform": "telegram",
         "chatId": "-1001234567890",
-        "topicId": "9876543210"
+        "topicId": "42"
       }
     ]
   }

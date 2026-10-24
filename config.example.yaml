@@ -1,6 +1,8 @@
-# Routes
+# Example configuration — the schema of groups and routes, shown as YAML.
+# The worker does not load this file: configuration lives in D1 and is managed
+# from the console (/admin) or the Admin API, which accept the same fields as JSON.
 # Each route defines a filter chain and one or more target destinations
-# (Discord channel/thread and/or Telegram chat/topic). See docs/guide/configuration.md.
+# (Discord channel/thread, Telegram chat/topic, Feishu chat). See docs/guide/routes.md.
 
 # Groups scope admin access and can restrict which org/user events flow in.
 groups:
@@ -11,7 +13,7 @@ groups:
       - login: "your-github-id"
         role: owner
     # owners: ["myorg"]            # restrict events to this org/user (optional)
-    # providers: ["github", "gitea"]  # restrict to source platforms (optional; empty = all)
+    # providers: ["github", "gitea", "custom"]  # restrict to source platforms (optional; empty = all)
     # installationId: 12345678     # GitHub App installation binding (auto-created on installation.created)
     # emoji: true                  # include emoji in messages (default true)
     # Forge hosts: label message footers with the host an event came from
@@ -24,9 +26,9 @@ groups:
     #     type: gitea
     #   - host: "git2.example.com"  # another one
     #     type: gitea
-    # lang: "en"                   # message language for this group's routes (en/zh, default en)
-    # Webhook log channel: a Discord channel/thread or Telegram chat/topic that
-    # receives a summary of every webhook this group's routes dispatch.
+    # lang: "en"                   # message language for this group's routes (en/zh or a KV i18n:<lang> override; default en)
+    # Webhook log channel: a Discord channel/thread, Telegram chat/topic or Feishu
+    # chat that receives a summary of every webhook this group's routes dispatch.
     # logTarget:
     #   platform: discord
     #   channelId: "CHANNEL_ID_HERE"
@@ -61,11 +63,11 @@ routes:
   #     - platform: discord
   #       channelId: "CHANNEL_ID_HERE"
   #       threadId: "THREAD_ID_HERE"
-  #   - platform: telegram
-  #       chatId: "-1001234567890"
-  #       topicId: "9876543210"
-  #   - platform: feishu
-  #       chatId: "oc_xxxxxxxxxxxxxxxx"  # Feishu group chat_id
+  #     - platform: telegram
+  #       chatId: "-1001234567890"     # numeric chat id (no @username)
+  #       topicId: "42"
+  #     - platform: feishu
+  #       chatId: "oc_xxxxxxxxxxxxxxxx"  # Feishu group chat_id (no topics)
 
   # - id: exclude-bot
   #   name: "Exclude Bot Actions"
@@ -73,7 +75,7 @@ routes:
   #   groupId: default
   #   filters:
   #     - type: actor
-  #       match: "[bot]"
+  #       match: "*[bot]"
   #       exclude: true
   #   targets:
   #     - platform: discord
@@ -137,12 +139,13 @@ routes:
   #     - platform: discord
   #       channelId: "CHANNEL_ID_HERE"
 
-  # Nested `ast` groups (all / any / not) replace the flat filters list and take
-  # precedence over `filters` when both are present.
+  # Nested `ast` groups (all / any / not) take precedence over the flat `filters`
+  # list; the route still carries a `filters` list (it may be empty).
   # - id: grouped-owners
   #   name: "PRs from either owner"
   #   enabled: true
   #   groupId: default
+  #   filters: []
   #   ast:
   #     all:
   #       - type: event

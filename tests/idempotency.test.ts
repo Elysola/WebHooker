@@ -22,8 +22,9 @@ describe("deliveryKey", () => {
     expect(deliveryKey("github", "team-a", "deliv-1")).toBe("delivery:github:team-a:deliv-1");
   });
 
-  it("falls back to 'global' without a tenant", () => {
-    expect(deliveryKey("github", undefined, "deliv-1")).toBe("delivery:github:global:deliv-1");
+  it("uses a scope no group id can take without a tenant", () => {
+    expect(deliveryKey("github", undefined, "deliv-1")).toBe("delivery:github:@global:deliv-1");
+    expect(deliveryKey("github", "global", "deliv-1")).toBe("delivery:github:global:deliv-1");
   });
 });
 

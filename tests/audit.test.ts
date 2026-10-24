@@ -1,79 +1,33 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { recordAudit, getAuditLog, pruneAuditLogs } from "../server/lib/lib/audit";
-
-function createMockD1(): D1Database {
-  let rows: Array<Record<string, unknown>> = [];
-  let id = 1;
-
-  function queryAll(sql: string, args: unknown[]): Array<Record<string, unknown>> {
-    if (sql.startsWith("INSERT")) return [];
-    let filtered = rows;
-    if (sql.includes("group_id = ?")) {
-      const gid = args[0] as string;
-      filtered = rows.filter((r) => r.group_id === gid);
-    }
-    const limit = args[args.length - 1] as number;
-    return [...filtered]
-      .sort((a, b) => (b.ts as number) - (a.ts as number))
-      .slice(0, limit)
-      .map((r) => ({
-        id: r.id,
-        ts: r.ts ?? 0,
-        actor_id: r.actor_id ?? null,
-        actor_login: r.actor_login ?? null,
-        action: r.action ?? "",
-        target_type: r.target_type ?? null,
-        target_id: r.target_id ?? null,
-        group_id: r.group_id ?? null,
-        detail: r.detail ?? null,
-        ip: r.ip ?? null,
-      }));
-  }
-
-  const db = {
-    prepare: (sql: string): { bind: (args: unknown[]) => unknown } => ({
-      bind: (...args: unknown[]) => ({
-        run: async (): Promise<{ meta: { changes: number }; results?: unknown[] }> => {
-          if (sql.startsWith("INSERT")) {
-            const row: Record<string, unknown> = { id: id++ };
-            for (const [key, value] of [
-              ["ts", args[0]],
-              ["actor_id", args[1]],
-              ["actor_login", args[2]],
-              ["action", args[3]],
-              ["target_type", args[4]],
-              ["target_id", args[5]],
-              ["group_id", args[6]],
-              ["detail", args[7]],
-              ["ip", args[8]],
-            ] as const) {
-              if (value != null) row[key] = value;
-            }
-            rows.push(row);
-            return { meta: { changes: 1 } };
-          }
-          if (sql.startsWith("DELETE")) {
-            const cutoff = args[0] as number;
-            const before = rows.length;
-            rows = rows.filter((r) => (r.ts as number) >= cutoff);
-            return { meta: { changes: before - rows.length } };
-          }
-          return { meta: { changes: 0 }, results: queryAll(sql, args) };
-        },
-        all: async (): Promise<{ results: Array<Record<string, unknown>> }> => ({
-          results: queryAll(sql, args),
-        }),
-      }),
-    }),
-  } as unknown as D1Database;
-  return db;
-}
+import { createSqliteD1 } from "./d1-sqlite";
 
 describe("audit log", () => {
   let db: D1Database;
 
-  beforeEach(() => {
-    db = createMockD1();
+  beforeEach(async () => {
+    db = createSqliteD1().db;
+    for (const id of ["g1", "g2", "g3"]) {
+      await db
+        .prepare(
+          "INSERT INTO d1_groups (id, name, data, version, created_at, updated_at) VALUES (?, ?, ?, 1, 0, 0)",
+        )
+        .bind(id, id, JSON.stringify({ id, name: id, instance: `inst-${id}` }))
+        .run();
+    }
+  });
+
+  it("files a late entry under the group's current id, never a deleted one", async () => {
+    // The group was renamed (same instance) before the entry was written.
+    await db.prepare("UPDATE d1_groups SET id = 'g9' WHERE id = 'g1'").run();
+    await recordAudit(db, { ts: 1, action: "renamed", groupId: "g1", groupInstance: "inst-g1" });
+    // An entry for a group deleted meanwhile belongs to no group.
+    await db.prepare("DELETE FROM d1_groups WHERE id = 'g2'").run();
+    await recordAudit(db, { ts: 2, action: "deleted", groupId: "g2" });
+    expect((await getAuditLog(db, { groupId: "g9" })).map((e) => e.action)).toEqual(["renamed"]);
+    expect(await getAuditLog(db, { groupId: "g1" })).toEqual([]);
+    expect(await getAuditLog(db, { groupId: "g2" })).toEqual([]);
+    expect((await getAuditLog(db)).map((e) => e.groupId ?? null)).toEqual([null, "g9"]);
   });
 
   it("records and loads entries newest-first", async () => {
@@ -107,6 +61,16 @@ describe("audit log", () => {
     const entries = await getAuditLog(db, { groupId: "g2" });
     expect(entries).toHaveLength(1);
     expect(entries[0]!.action).toBe("y");
+  });
+
+  it("filters by a set of groups before applying the limit", async () => {
+    await recordAudit(db, { ts: 1, actorLogin: "a", action: "mine", groupId: "g1" });
+    for (let i = 0; i < 5; i++) {
+      await recordAudit(db, { ts: 10 + i, actorLogin: "b", action: "other", groupId: "g2" });
+    }
+    const entries = await getAuditLog(db, { groupId: ["g1", "g3"], limit: 2 });
+    expect(entries.map((e) => e.action)).toEqual(["mine"]);
+    expect(await getAuditLog(db, { groupId: [] })).toEqual([]);
   });
 
   it("prunes entries older than the retention window", async () => {

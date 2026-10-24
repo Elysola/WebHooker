@@ -16,7 +16,7 @@ The repo comes from `payload.repository.full_name` (falling back to a generic "r
 
 Only the repo head is hyperlinked — never the whole title:
 
-- **Discord** (embed titles cannot contain partial links): the title is the repo head `{repo}{#number}`, linked to the repository; the `: {subject}` text is rendered as the first line of the description, unlinked.
+- **Discord** (embed titles cannot contain partial links): the title is the repo head `{repo}{#number}`, linked to the event's object (the issue, PR, comment or run page); the `: {subject}` text is rendered as the first line of the description, unlinked.
 - **Telegram** (HTML supports inline links): the one-line title keeps the subject, with only the repo head wrapped in a link.
 
 Messages whose title has no colon separator (a `:` followed by a space) keep the legacy whole-title link behavior.
@@ -37,7 +37,7 @@ With `Group.forgeSources` (a list of `{ host, type, name? }` entries) the messag
 
 ## In-Place Updates
 
-`workflow_run` and `check_run` messages are sent once and edited in place as the run progresses (queued → running → success/failure) — no duplicate messages. Tracking uses KV `msg:*` with a stable `updateKey` per run: `workflow_run` keys on the workflow id, while `check_run` keys on the check name + commit SHA (falling back to the run id) so deployments that emit a fresh run id per phase — e.g. Cloudflare Pages — still edit the same message.
+Messages about an object that changes over time are sent once and edited in place as it changes — `workflow_run` and `check_run` / `check_suite` as the run progresses (queued → running → success/failure), deployments and their statuses, issue comments, pull request reviews and review comments as they are edited or deleted — instead of posting a new message. Each edit re-renders the whole message from the newest event. Tracking uses D1 `message_tracking` (KV `msg:*` as fallback) with a stable `updateKey` per object: `workflow_run` keys on the run id, `check_suite` on the suite id, while `check_run` keys on the check suite (or app) + check name + commit SHA (falling back to the run id) so deployments that emit a fresh run id per phase — e.g. Cloudflare Pages — still edit the same message. The chain is also keyed by the forge (provider + repository host) and the target platform, so two Gitea instances with the same `owner/repo` never edit each other's messages. An event older than the state a message already shows (delivered late) does not overwrite it; a failed edit is reported as a failure rather than posting a second message — a new message is sent only when the old one no longer exists.
 
 ## Workflow Jobs
 

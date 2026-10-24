@@ -40,15 +40,16 @@ WebHooker supports 28 GitHub webhook event types, each with a dedicated formatte
 
 Each event type uses a distinct color in the Discord embed (from `server/lib/formatters/colors.ts`):
 
-| Color              | Events                                                                                                                                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Green (`#2da44e`)  | push, PR opened / ready for review, issue opened, workflow success, release published, check success, review approved, deployment success, member added, milestone closed, discussion answered |
-| Red (`#f85149`)    | PR closed, issue closed, workflow failure, release deleted, delete, check failure, review changes requested, deployment failure, member removed, code scanning / dependabot critical & high    |
-| Purple (`#8957e5`) | PR merged, label, discussion                                                                                                                                                                   |
-| Blue (`#1f6feb`)   | PR (other actions), issue reopened, fork, milestone opened                                                                                                                                     |
-| Yellow (`#d29922`) | workflow (queued/running/other), release prerelease, star, check (other), deployment pending, code scanning / dependabot medium                                                                |
-| Gray (`#6e7681`)   | issue comment, commit comment, discussion comment                                                                                                                                              |
-| Gray (`#8b949e`)   | review commented, repository, code scanning / dependabot low, default                                                                                                                          |
+| Color              | Events                                                                                                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Green (`#2da44e`)  | PR opened / ready for review, issue opened, workflow success, release published, check success, review approved, deployment success, member added, milestone closed, discussion answered    |
+| Green (`#2ea44f`)  | push                                                                                                                                                                                        |
+| Red (`#f85149`)    | PR closed, issue closed, workflow failure, release deleted, delete, check failure, review changes requested, deployment failure, member removed, code scanning / dependabot critical & high |
+| Purple (`#8957e5`) | PR merged, label, discussion                                                                                                                                                                |
+| Blue (`#1f6feb`)   | PR (other actions), issue reopened, fork, milestone opened                                                                                                                                  |
+| Yellow (`#d29922`) | workflow (queued/running/other), release prerelease, star, check (other), deployment pending, code scanning / dependabot medium                                                             |
+| Gray (`#6e7681`)   | issue comment, commit comment, discussion comment                                                                                                                                           |
+| Gray (`#8b949e`)   | review commented, repository, code scanning / dependabot low, default                                                                                                                       |
 
 ## Generic Fallback
 
@@ -60,7 +61,7 @@ Any event type without a dedicated formatter falls through to the generic format
 
 ## In-Place Message Updates
 
-`workflow_run` and `check_run` events (queued → running → success/failure) are sent once and then **edited in place** for each subsequent phase instead of posting a new message. The original message's link preview, author, and field layout are preserved; only the status, conclusion emoji, duration, and title are refreshed. Supported on both Discord (`editMessage`) and Telegram (`editMessageText` / `editMessageCaption`). `check_run` tracks by check name + commit SHA (falling back to the run id), so providers that issue a new run id per phase — e.g. Cloudflare Pages — still edit the same message.
+`workflow_run` and `check_run` events (queued → running → success/failure) are sent once and then **edited in place** for each subsequent phase instead of posting a new message. Each edit re-renders the whole message from the newest event. Check suites, deployments (and their statuses), issue comments, pull request reviews and review comments are edited in place the same way. Supported on Discord (`editMessage`), Telegram (`editMessageText` / `editMessageCaption`) and Feishu. `check_run` tracks by check suite (or app) + check name + commit SHA (falling back to the run id), so providers that issue a new run id per phase — e.g. Cloudflare Pages — still edit the same message, while same-named checks of different workflows or apps keep separate messages. An older phase never overwrites a newer one, and a deleted comment or dismissed review stays shown as such.
 
 `workflow_run` messages also carry a colored **Jobs** breakdown. Because the webhook payload itself has no job list (only a `jobs_url`), the worker fetches it from the GitHub API — authenticated with a GitHub App installation token when `GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY` are set, otherwise unauthenticated (public repositories). The App therefore needs the **Actions: read** repository permission.
 
@@ -68,11 +69,11 @@ Any event type without a dedicated formatter falls through to the generic format
 
 See the [Filter Tutorial](../guide/filters) for a hands-on guide with worked examples.
 
-| Filter    | Works With                                                                                                                                                     |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `event`   | All events                                                                                                                                                     |
-| `repo`    | All events                                                                                                                                                     |
-| `actor`   | All events                                                                                                                                                     |
-| `action`  | Events with `action` field in payload                                                                                                                          |
-| `branch`  | push, pull_request, pull_request_review, pull_request_review_comment, create, delete, workflow_run, workflow_job, check_suite, deployment, code_scanning_alert |
-| `keyword` | All events (searches full payload body)                                                                                                                        |
+| Filter    | Works With                                                                                                                                                                                   |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event`   | All events                                                                                                                                                                                   |
+| `repo`    | All events                                                                                                                                                                                   |
+| `actor`   | All events                                                                                                                                                                                   |
+| `action`  | Events with `action` field in payload                                                                                                                                                        |
+| `branch`  | push, pull_request, pull_request_review, pull_request_review_comment, create, delete, workflow_run, workflow_job, check_run, check_suite, deployment, deployment_status, code_scanning_alert |
+| `keyword` | All events (searches full payload body)                                                                                                                                                      |

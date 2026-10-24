@@ -2,6 +2,8 @@
 
 ## Cloudflare 设置
 
+`wrangler.jsonc` 中带有维护者的 `account_id` 与资源 id。请把 `account_id` 换成你自己的 Cloudflare 账号 id（`bunx wrangler whoami`），或删除该字段以部署到当前登录的账号，并按下面的步骤替换各资源 id。
+
 ### 1. 创建 KV 命名空间
 
 ```bash
@@ -32,7 +34,8 @@ bunx wrangler secret put DISCORD_PUBLIC_KEY   # Discord 应用的公钥（开发
 bunx wrangler secret put TELEGRAM_TOKEN       # Telegram Bot Token（BotFather 获取）—— Telegram 路由必需
 bunx wrangler secret put FEISHU_APP_ID        # 飞书应用 ID —— 飞书路由必需
 bunx wrangler secret put FEISHU_APP_SECRET    # 飞书应用密钥 —— 飞书路由必需
-bunx wrangler secret put ADMIN_USER_IDS       # 逗号分隔的 GitHub ID/登录名，允许进入 Web UI
+bunx wrangler secret put ADMIN_USER_IDS       # 允许进入 Web UI 的 GitHub 用户 id，逗号分隔（建议写数字 id）
+bunx wrangler secret put BASE_URL             # worker 的公网地址——OAuth 回调与 Telegram webhook 同步都需要
 ```
 
 ::: tip 目标频道按路由配置
@@ -40,7 +43,7 @@ bunx wrangler secret put ADMIN_USER_IDS       # 逗号分隔的 GitHub ID/登录
 :::
 
 ::: tip GitHub App ID / 私钥为可选
-`GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY`（PKCS#8 PEM）用于 [App 安装流程](#github-app-设置)，在安装后选择页解析安装所属账号的登录名，并用于签发安装令牌做 API 增强——拉取 `workflow_run` 作业列表与 check-suite 构建日志。可以跳过不设——安装页会显示匿名 `inst-{installationId}` 分组，公开仓库的作业列表仍会以匿名方式加载，私有仓库的构建日志则省略。OAuth 流程只需要 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`。
+`GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY`（PKCS#8 PEM）用于 [App 安装流程](#github-app-设置)，在安装后选择页解析安装所属账号的登录名，并用于签发安装令牌做 API 增强——拉取 `workflow_run` 作业列表与 check-suite 构建日志。不设置时只有超级管理员能绑定安装——安装流程无法解析安装所属账号，也就无法核实登录用户是否管理该安装；公开仓库的作业列表仍会以匿名方式加载，私有仓库的构建日志则省略。OAuth 流程只需要 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`。
 :::
 
 Discord 交互通过 HTTPS Interactions Endpoint 送达，需要设置 `DISCORD_PUBLIC_KEY` 并把 **Interactions Endpoint URL** 指向 `https://your-domain/discord/interactions`。参见下方 [Interactions Endpoint](#interactions-endpoint)。
@@ -72,10 +75,10 @@ bun run db:migrate:prod   # 将迁移应用到远端 D1 数据库
 bun run db:migrate        # 将迁移应用到本地（Miniflare）数据库
 ```
 
-`db:migrate` 脚本执行 `wrangler d1 migrations apply webhooker`（见 `package.json`），逐一应用 `migrations/` 下的 SQL 文件，并在 `d1_migrations` 表中记录已应用的版本。
+`db:migrate` 脚本执行 `wrangler d1 migrations apply webhooker`（见 `package.json`），逐一应用 `migrations/` 下的 SQL 文件，并在 `d1_migrations` 表中记录已应用的版本。`bun run deploy` 会在部署前先执行 `db:migrate:prod`，因此之后新增的迁移会在下次部署时自动应用；已应用的会被跳过，迁移失败时不会继续部署。
 
 ::: tip 曾用 `d1 execute` 迁移过的数据库
-如果数据库已有这些表/列（例如之前用 `wrangler d1 execute --file` 迁移过），可能缺少 `d1_migrations` 追踪表，`db:migrate:prod` 会尝试重新执行所有迁移；`0002_log_detail.sql` 中的 `ALTER TABLE ... ADD COLUMN` 语句会因列已存在而失败。此时请直接执行文件：
+如果数据库已有这些表/列（例如之前用 `wrangler d1 execute --file` 迁移过），可能缺少 `d1_migrations` 追踪表，`db:migrate:prod` 会尝试重新执行所有迁移；`0002_log_detail.sql` 中的 `ALTER TABLE ... ADD COLUMN` 语句会因列已存在而失败。此时请直接执行数据库尚未应用的文件（`ALTER TABLE ... ADD COLUMN` 的文件重复执行会失败，已应用的请跳过）：
 
 ```bash
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0001_init.sql
@@ -89,7 +92,10 @@ bunx wrangler d1 execute webhooker --remote --file ./migrations/0008_storage_d1.
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0010_fragments.sql
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0011_feishu_links.sql
 bunx wrangler d1 execute webhooker --remote --file ./migrations/0012_route_position.sql
+bunx wrangler d1 execute webhooker --remote --file ./migrations/0013_prune_indexes.sql
 ```
+
+这类数据库没有迁移历史，`bun run deploy`（会先执行 `db:migrate:prod`）会再次尝试所有迁移并中止。请用 `bunx wrangler deploy` 部署，之后新增的迁移文件也按上面的方式手动执行。
 
 :::
 
@@ -101,24 +107,29 @@ bunx wrangler d1 execute webhooker --remote --file ./migrations/0012_route_posit
 bunx wrangler r2 bucket create webhooker-payloads
 ```
 
-bucket 已在 `wrangler.jsonc` 中声明（`r2_buckets`），无需修改绑定。
+然后取消 `wrangler.jsonc` 中 `r2_buckets` 块的注释（默认是注释掉的）；没有该绑定时，超大负载仍暂存在 KV。
 
 ### 5. 创建队列（可选）
 
-`QUEUE` 绑定会通过 Cloudflare Queues 投递 webhook（异步分发，带重试退避与死信队列）。跳过此步则保持同步内联分发。
+`QUEUE` 绑定会通过 Cloudflare Queues 投递 webhook（异步分发，带重试退避与死信队列）。如需保持同步内联分发，请删除或注释掉 `wrangler.jsonc` 中的 `queues` 块；保留该块时两个队列都必须存在。
 
 ```bash
 bunx wrangler queues create webhooker-delivery
 bunx wrangler queues create webhooker-delivery-dlq
 ```
 
-队列已在 `wrangler.jsonc` 中声明（`queues.producers` / `queues.consumers`），无需修改绑定。`webhooker-delivery` 消费者对可重试失败做指数退避重试（5s/30s/2m/10m），达到 `max_retries` 后消息进入 `webhooker-delivery-dlq` 并标记为 dead。
+队列已在 `wrangler.jsonc` 中声明（`queues.producers` / `queues.consumers`），无需修改绑定。`webhooker-delivery` 消费者对可重试失败（5xx、429、网络错误、限流重试耗尽、飞书 token 错误）做指数退避重试（5s/30s/2m/10m），达到 `max_retries` 后消息进入 `webhooker-delivery-dlq` 并标记为 dead。重试按目标进行：已成功或已永久失败的目标会被记录且不再尝试，因此单个坏目标不会取消其他目标的重试，重试也不会重发已记录的目标（发送成功但记录写入失败的目标可能被重发）。每次消费者调用最多取 3 条消息，共享 12 分钟与 20 次目标发送的预算，因为 Workers 免费版的限额（50 次 D1 查询、50 个子请求）按单次调用计算：预算没轮到的消息会被重试，目标数超过预算的投递会以新的队列消息继续。只要过程中有任一目标永久失败，即使其余目标最终都已处理，该投递仍以 `failed` 结束。领取投递带 5 分钟租约，两个消费者不会同时分发同一投递。
+
+> [!NOTE]
+> R2 没有按对象的 TTL。暂存负载在分发后删除，定时任务 `storage-prune` 会清理超过五天的遗留对象；也可以为 `webhooks/` 前缀添加 bucket [生命周期规则](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)。
 
 ### 6. 部署
 
 ```bash
-bunx wrangler deploy
+bun run deploy   # 先应用待执行的 D1 迁移，再执行 wrangler deploy
 ```
+
+在终端中运行时，wrangler 会在应用待执行的迁移前请求确认；在 CI 中会直接继续。如果通过 Cloudflare 的 Git 集成（Workers Builds）部署，请把其部署命令设为 `bun run deploy`，以便同样自动应用迁移。
 
 Worker 现在可通过 `https://webhooker.<your-subdomain>.workers.dev` 访问。
 
@@ -151,7 +162,7 @@ Worker 现在可通过 `https://webhooker.<your-subdomain>.workers.dev` 访问�
    - **Organization permissions**: Members (read) —— 如果需要
 4. 订阅事件（全部 28 种支持的事件）：
    - Push、Pull request、Issues、Issue comment、Workflow run、Workflow job、Status、Deployment、Deployment status、Ping、Release、Create、Delete、Star、Fork、Check run、Check suite、Pull request review、Pull request review comment、Commit comment、Member、Label、Milestone、Discussion、Discussion comment、Repository、Code scanning alert、Dependabot alert
-5. 生成私钥 — 可选；设置 `GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY` 后，安装后页面会显示安装所属账号的登录名，并以安装令牌鉴权私有仓库的 API 增强（作业列表、构建日志）（见上方提示）。
+5. 生成私钥并设置 `GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY`：安装流程需要它们核实安装者是否管理该安装（没有时只有超级管理员能绑定安装），私有仓库的 API 增强（作业列表、构建日志）也用它们鉴权（见上方提示）。
 
 ### 2. 安装 App
 
@@ -186,20 +197,20 @@ Worker 现在可通过 `https://webhooker.<your-subdomain>.workers.dev` 访问�
 2. 将 **Interactions Endpoint URL** 设为 `https://your-domain/discord/interactions`。
 3. 所有交互请求都使用 Ed25519 签名验证（`X-Signature-Ed25519` 覆盖 `X-Signature-Timestamp + body`）。
 
-`/gh` 斜杠命令与 `GitHub: 添加/编辑/删除评论` 消息命令由定时任务（每 5 分钟）同步注册：按服务器即时可用，同时全局注册（24h 去重，约 1 小时传播）。Bot 从不连接 Discord Gateway，因此显示为**离线**——消息推送不受影响（始终走 REST）。
+`/gh` 斜杠命令与 `GitHub: 添加/编辑/删除评论` 消息命令由定时任务（每 5 分钟）同步注册：按服务器即时可用（每轮最多 30 次 API 调用），同时全局注册（约 1 小时传播）；命令定义变化时两者都会重新注册。Bot 从不连接 Discord Gateway，因此显示为**离线**——消息推送不受影响（始终走 REST）。
 
 用户运行 `/gh login` 绑定自己的 GitHub 账号，即可以本人身份评论 issue/PR。完整命令说明见[机器人命令](/zh/guide/commands)。
 
 ## Telegram 机器人配置
 
 1. 用 [@BotFather](https://t.me/BotFather) 创建机器人，将 Token 复制到 `TELEGRAM_TOKEN`。
-2. （可选）设置 `TELEGRAM_WEBHOOK_SECRET`；webhook 注册时会作为 `secret_token` 传给 Telegram，`POST /telegram/webhook` 使用时间安全比较校验。
-3. Worker 会在定时任务中自动同步 webhook（`setWebhook` 指向 `{BASE_URL}/telegram/webhook`），因此无需手动调用 `setWebhook`——只需确保 `BASE_URL` 已设置。
-4. 将机器人加入群组（或启用话题），在路由配置中用 `chatId` / `topicId` 指定目标。
+2. （可选）设置 `TELEGRAM_WEBHOOK_SECRET`；webhook 注册时会作为 `secret_token` 传给 Telegram，`POST /telegram/webhook` 使用时间安全比较校验。未设置时改用由 `TELEGRAM_TOKEN` 派生的密钥，端点始终需要认证（下一次定时同步会用它重新注册 webhook）。
+3. Worker 会在定时任务中自动同步 webhook（`setWebhook` 指向 `{BASE_URL}/telegram/webhook`，仅在注册内容变化时以及每天一次），因此无需手动调用 `setWebhook`——只需确保 `BASE_URL` 已设置。
+4. 将机器人加入群组（或启用话题），在路由配置中用 `chatId` / `topicId` 指定目标。请使用数字 chat id（如 `-1001234567890`），不接受 `@username` 目标。
 
 在 Telegram 中，`/gh` 命令（`/gh login`、`/gh logout`、`/gh comment <内容>`、`/gh merge`、`/gh close`）通过在通知消息上**回复**来使用——见[机器人命令](/zh/guide/commands)。
 
-头像使用内置 `GET /api/richheader` 渲染为链接预览卡片（可用 `TELEGRAM_RICH_HEADER_HOST` 覆盖）。
+头像使用内置 `GET /api/richheader` 渲染为链接预览卡片（可用 `TELEGRAM_RICH_HEADER_HOST` 覆盖；未设置 `BASE_URL` 时直接以头像图片作为预览）。消息始终是文本消息，原地更新时仍有完整的 4096 字符上限。
 
 ## 飞书机器人配置
 
@@ -210,9 +221,9 @@ Worker 现在可通过 `https://webhooker.<your-subdomain>.workers.dev` 访问�
    - `im:message:send_as_bot`（以应用机器人身份发送消息）
    - `im:message:send`（旧版发送消息权限）
 4. 在**机器人**功能中启用机器人。将机器人添加到目标群聊（或创建新群），并在群设置中复制 **Chat ID**。
-5. 在 WebHooker `/admin` 中创建或编辑路由，添加目标：`platform: "feishu"`，`chatId` 填写飞书 **Chat ID**，子话题可填 `topicId`。
+5. 在 WebHooker `/admin` 中创建或编辑路由，添加目标：`platform: "feishu"`，`chatId` 填写飞书 **Chat ID**（`oc_…`）；飞书目标没有话题。
 
-WebHooker 使用应用级凭证（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`）请求 `tenant_access_token`（有效期约 2 小时），缓存到期前复用，并以**卡片消息**（`interactive`）形式发送。`workflow_run` / `check_run` 的进度更新同样会调用飞书消息编辑接口，原地更新消息。
+WebHooker 使用应用级凭证（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`）请求 `tenant_access_token`（有效期约 2 小时），按应用缓存在内存与 KV 中、到期前不久为止，被飞书拒绝时立即丢弃，并以**卡片消息**（`interactive`）形式发送。`workflow_run` / `check_run` 的进度更新同样会调用飞书消息编辑接口，原地更新消息。
 
 ### 入站：指令与按钮
 
@@ -230,7 +241,8 @@ WebHooker 使用应用级凭证（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`）请求
 2. 订阅以下事件：
    - `im.message.receive_v1` —— 接收 `/gh` 指令（依赖 `im:message` 权限）。
    - `card.action.trigger` —— 接收卡片按钮点击。
-3. **凭证与基础信息**中的 **App Secret**（即 `FEISHU_APP_SECRET`）同时用于对入站回调做 `X-Lark-Signature` 签名，WebHooker 会校验它。
+3. 在**事件与回调 → 加密策略**中，把 **Encrypt Key** 填入 `FEISHU_ENCRYPT_KEY`（WebHooker 会校验 `X-Lark-Signature`——timestamp + nonce + key + body 的 SHA-256——并解密加密回调），和/或把 **Verification Token** 填入 `FEISHU_VERIFICATION_TOKEN`。至少需要其中一个；都未设置时所有回调都会被拒绝。同一事件 id 只执行一次，飞书重试也不会重复执行。
+4. `/gh login` 只能在与机器人的单聊（p2p）中使用；GitHub 用户需在同时显示双方账号的确认页上确认绑定。
 
 ### 所需权限
 

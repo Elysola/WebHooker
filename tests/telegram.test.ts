@@ -224,9 +224,11 @@ describe("TelegramDriver", () => {
     );
   });
 
-  it("sends a small avatar photo (s=64) when the author has an icon", async () => {
+  it("shows a small avatar (s=64) as the link preview of a text message", async () => {
     let capturedInit: RequestInit | undefined;
+    let capturedUrl = "";
     mockFetch((url, init) => {
+      capturedUrl = url;
       capturedInit = init;
       return new Response(JSON.stringify({ ok: true, result: { message_id: 9 } }), { status: 200 });
     });
@@ -242,8 +244,15 @@ describe("TelegramDriver", () => {
     );
 
     expect(result.ok).toBe(true);
-    const body = JSON.parse(String(capturedInit!.body)) as Record<string, unknown>;
-    expect(body.photo).toBe("https://avatars.githubusercontent.com/u/1?v=4&s=64");
+    // A text message (never a captioned photo), so later edits keep the full
+    // 4096-character budget.
+    expect(capturedUrl).toContain("/sendMessage");
+    const body = JSON.parse(String(capturedInit!.body)) as {
+      link_preview_options?: { url?: string };
+    };
+    expect(body.link_preview_options?.url).toBe(
+      "https://avatars.githubusercontent.com/u/1?v=4&s=64",
+    );
   });
 
   it("sends a plain message when the author has no icon", async () => {

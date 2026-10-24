@@ -11,12 +11,19 @@ export function formatCodeScanningAlert(
 ): NeutralMessage {
   const action = (payload.action as string) ?? "created";
   const alert = payload.alert as {
-    rule?: { id?: string; severity?: string; description?: string };
+    rule?: {
+      id?: string;
+      severity?: string;
+      security_severity_level?: string;
+      description?: string;
+    };
     most_recent_instance?: { location?: { path?: string } };
     state?: string;
   };
 
-  const severity = alert.rule?.severity ?? "warning";
+  // The security severity (critical/high/medium/low) where the rule has one;
+  // `severity` is the tool's own level (error/warning/note).
+  const severity = alert.rule?.security_severity_level ?? alert.rule?.severity ?? "warning";
   const colorKey =
     severity === "critical"
       ? "code_scanning_critical"

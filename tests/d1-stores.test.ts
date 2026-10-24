@@ -9,7 +9,16 @@ import {
   kvMessageTracker,
   messageTracker,
 } from "../server/lib/lib/message-tracker";
-import { getDeliveryState, setDeliveryState } from "../server/lib/queue/delivery";
+import {
+  acquireDelivery,
+  finishLease,
+  getDeliveryState,
+  renewLease,
+  setDeliveryState,
+} from "../server/lib/queue/delivery";
+import { createMemoryKV, createSqliteD1 } from "./d1-sqlite";
+import { chainLock } from "../server/lib/lib/message-tracker";
+import { recordSendBatch } from "../server/lib/lib/send-log-batch";
 import { canUseD1 } from "../server/lib/storage/d1";
 import type { Env } from "../server/lib/types";
 
@@ -159,17 +168,20 @@ describe("d1MessageTracker", () => {
   it("round-trips a message id", async () => {
     const { db } = createMockD1();
     const tracker = d1MessageTracker(db);
-    await tracker.set("evt-1", "discord:123", "message-42");
-    await expect(tracker.get("evt-1", "discord:123")).resolves.toBe("message-42");
+    await tracker.set("evt-1", "discord:123", { messageId: "message-42", version: 7 });
+    await expect(tracker.get("evt-1", "discord:123")).resolves.toEqual({
+      messageId: "message-42",
+      version: 7,
+    });
     await expect(tracker.get("evt-1", "discord:999")).resolves.toBeNull();
   });
 
   it("updates on re-set and deletes on delete", async () => {
     const { db } = createMockD1();
     const tracker = d1MessageTracker(db);
-    await tracker.set("evt-1", "tg:9", "old");
-    await tracker.set("evt-1", "tg:9", "new");
-    await expect(tracker.get("evt-1", "tg:9")).resolves.toBe("new");
+    await tracker.set("evt-1", "tg:9", { messageId: "old", version: 1 });
+    await tracker.set("evt-1", "tg:9", { messageId: "new", version: 2 });
+    await expect(tracker.get("evt-1", "tg:9")).resolves.toEqual({ messageId: "new", version: 2 });
     await tracker.delete("evt-1", "tg:9");
     await expect(tracker.get("evt-1", "tg:9")).resolves.toBeNull();
   });
@@ -227,8 +239,11 @@ describe("factory fallback decision", () => {
     const db = {} as D1Database;
     const kv = createMockKV();
     const tracker = messageTracker(db, kv);
-    await tracker.set("evt-1", "discord:1", "m1");
-    await expect(tracker.get("evt-1", "discord:1")).resolves.toBe("m1");
+    await tracker.set("evt-1", "discord:1", { messageId: "m1", version: 0 });
+    await expect(tracker.get("evt-1", "discord:1")).resolves.toEqual({
+      messageId: "m1",
+      version: 0,
+    });
     await tracker.delete("evt-1", "discord:1");
     await expect(tracker.get("evt-1", "discord:1")).resolves.toBeNull();
   });
@@ -240,8 +255,92 @@ describe("factory fallback decision", () => {
     await expect(idem.has("delivery:github:g1:e1")).resolves.toBe(true);
 
     const msg = kvMessageTracker(kv);
-    await msg.set("evt-1", "discord:1", "m1");
-    await expect(msg.get("evt-1", "discord:1")).resolves.toBe("m1");
+    await msg.set("evt-1", "discord:1", { messageId: "m1", version: 3 });
+    await expect(msg.get("evt-1", "discord:1")).resolves.toEqual({ messageId: "m1", version: 3 });
+  });
+
+  it("reads message ids stored before versions existed", async () => {
+    const kv = createMockKV();
+    await kv.put("msg:evt-1:discord:1", "legacy-id");
+    await expect(kvMessageTracker(kv).get("evt-1", "discord:1")).resolves.toEqual({
+      messageId: "legacy-id",
+      version: 0,
+    });
+  });
+});
+
+describe("D1 failures degrade to KV", () => {
+  it("idempotency claims fall back to KV when the D1 table is missing", async () => {
+    const { db } = createSqliteD1({
+      migrations: (f) => !f.startsWith("0008") && !f.startsWith("0013"),
+    });
+    const { kv } = createMemoryKV();
+    const store = idempotencyStore(db, kv);
+    await expect(store.claim("k", 120)).resolves.toBe(true);
+    await expect(store.claim("k", 120)).resolves.toBe(false);
+    await store.release("k");
+    await expect(store.claim("k", 120)).resolves.toBe(true);
+  });
+
+  it("message tracking falls back to KV when the D1 table is missing", async () => {
+    const { db } = createSqliteD1({
+      migrations: (f) => !f.startsWith("0008") && !f.startsWith("0013"),
+    });
+    const { kv } = createMemoryKV();
+    const tracker = messageTracker(db, kv);
+    await tracker.set("e", "t", { messageId: "m", version: 1 });
+    await expect(tracker.get("e", "t")).resolves.toEqual({ messageId: "m", version: 1 });
+  });
+});
+
+describe("acquireDelivery", () => {
+  function env(): Env {
+    return { KV: createMemoryKV().kv, DB: createSqliteD1().db } as Env;
+  }
+
+  it("lets exactly one consumer take a delivery", async () => {
+    const e = env();
+    expect((await acquireDelivery(e, "k")).status).toBe("acquired");
+    expect((await acquireDelivery(e, "k")).status).toBe("busy");
+  });
+
+  it("hands a waiting retry to the next consumer", async () => {
+    const e = env();
+    await acquireDelivery(e, "k");
+    await setDeliveryState(e, "k", "retrying");
+    expect((await acquireDelivery(e, "k")).status).toBe("acquired");
+  });
+
+  it("reports finished deliveries", async () => {
+    const e = env();
+    for (const status of ["delivered", "failed", "dead"] as const) {
+      await setDeliveryState(e, `k-${status}`, status);
+      expect((await acquireDelivery(e, `k-${status}`)).status).toBe("finished");
+    }
+  });
+
+  it("fences a holder whose lease was taken over", async () => {
+    const { db, sqlite } = createSqliteD1();
+    const e = { KV: createMemoryKV().kv, DB: db } as Env;
+    const first = await acquireDelivery(e, "k");
+    sqlite.exec("UPDATE delivery_state SET updated_at = 0");
+    // A takeover happens minutes later in practice; never in the same ms.
+    await Bun.sleep(2);
+    const second = await acquireDelivery(e, "k");
+    expect(second.status).toBe("acquired");
+    // The old holder can neither renew nor overwrite the new holder's outcome.
+    expect(await renewLease(e, "k", first.token)).toBeNull();
+    expect(await finishLease(e, "k", first.token, "delivered")).toBe(false);
+    expect(await finishLease(e, "k", second.token, "delivered")).toBe(true);
+    expect(await getDeliveryState(e, "k")).toBe("delivered");
+  });
+
+  it("takes over a lease whose holder went silent", async () => {
+    const { db, sqlite } = createSqliteD1();
+    const e = { KV: createMemoryKV().kv, DB: db } as Env;
+    await acquireDelivery(e, "k");
+    sqlite.exec("UPDATE delivery_state SET updated_at = 0");
+    expect((await acquireDelivery(e, "k")).status).toBe("acquired");
   });
 });
 
@@ -257,5 +356,54 @@ describe("delivery state falls back to KV without batch", () => {
     expect(JSON.parse(raw as string)).toMatchObject({ status: "delivered" });
     await expect(getDeliveryState(env, key)).resolves.toBe("delivered");
     await expect(getDeliveryState(env, "delivery-state:github:global:nope")).resolves.toBeNull();
+  });
+});
+
+describe("KV fallback transition", () => {
+  it("keeps honoring and releasing claims made in KV before the table existed", async () => {
+    const { db: noTable } = createSqliteD1({
+      migrations: (f) => !f.startsWith("0008") && !f.startsWith("0013"),
+    });
+    const { kv } = createMemoryKV();
+    await idempotencyStore(noTable, kv).claim("k", 600);
+    // The migration is applied afterwards (same KV, a database with the table).
+    const { db } = createSqliteD1();
+    const store = idempotencyStore(db, kv);
+    expect(await store.has("k")).toBe(true);
+    expect(await store.claim("k", 600)).toBe(false);
+    await store.release("k");
+    expect(await store.claim("k", 600)).toBe(true);
+  });
+});
+
+describe("chainLock", () => {
+  it("admits one holder at a time and only the holder can release", async () => {
+    const { db } = createSqliteD1();
+    const lock = chainLock(db, createMemoryKV().kv);
+    const token = await lock.acquire("chain", 60);
+    expect(token).not.toBeNull();
+    expect(await lock.acquire("chain", 60)).toBeNull();
+    await lock.release("chain", "999");
+    expect(await lock.acquire("chain", 60)).toBeNull();
+    await lock.release("chain", token!);
+    expect(await lock.acquire("chain", 60)).not.toBeNull();
+  });
+});
+
+describe("send log group attribution", () => {
+  it("files rows under the id the group instance has at insert time", async () => {
+    const { db, sqlite } = createSqliteD1();
+    sqlite.exec(
+      `INSERT INTO d1_groups (id, name, data, version, created_at, updated_at) VALUES ('renamed', 'R', '{"id":"renamed","name":"R","adminIds":[],"instance":"abc"}', 1, 0, 0)`,
+    );
+    const base = { ts: 1, routeId: "r", event: "push", target: "t", ok: true };
+    await recordSendBatch(db, [
+      { ...base, groupId: "old-id", groupInstance: "abc" },
+      { ...base, groupId: "deleted", groupInstance: "gone" },
+    ]);
+    expect(sqlite.query("SELECT group_id FROM send_logs ORDER BY id").all()).toEqual([
+      { group_id: "renamed" },
+      { group_id: null },
+    ]);
   });
 });

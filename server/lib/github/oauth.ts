@@ -1,8 +1,9 @@
 import { Octokit } from "octokit";
-import { saveToken, getToken } from "./store";
+import { saveToken, getToken, type TokenSource } from "./store";
 
 export function getOAuthURL(clientId: string, state: string): string {
-  return `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&state=${state}`;
+  // `read:org` lets the install flow check organization admin rights.
+  return `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=${encodeURIComponent("repo read:org")}&state=${state}`;
 }
 
 function b64url(buf: ArrayBuffer | string): string {
@@ -40,31 +41,82 @@ export async function createAppJwt(appId: string, privateKey: string): Promise<s
   return `${data}.${b64url(sig)}`;
 }
 
+export interface InstallationAccount {
+  login: string;
+  id: number;
+  /** "User" or "Organization". */
+  type: string;
+}
+
+const API_HEADERS = {
+  Accept: "application/vnd.github+json",
+  "X-GitHub-Api-Version": "2022-11-28",
+  "User-Agent": "WebHooker",
+};
+
 /**
- * Look up the account (org/user login) that owns a GitHub App installation,
- * using an App JWT. Returns null when the App credentials are missing or the
- * lookup fails (the caller falls back to an anonymous installation group).
+ * Look up the account (org/user) that owns a GitHub App installation, using
+ * an App JWT. Returns null when the App credentials are missing or the lookup
+ * fails.
  */
+export async function getInstallationDetails(
+  appId: string,
+  privateKey: string,
+  installationId: number,
+): Promise<InstallationAccount | null> {
+  if (!appId || !privateKey) return null;
+  try {
+    const jwt = await createAppJwt(appId, privateKey);
+    const res = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+      headers: { ...API_HEADERS, Authorization: `Bearer ${jwt}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      account?: { login?: string; id?: number; type?: string };
+    };
+    if (!data.account?.login) return null;
+    // An account without an id can still be named, but never matches a user.
+    return { login: data.account.login, id: data.account.id ?? -1, type: data.account.type ?? "" };
+  } catch {
+    return null;
+  }
+}
+
+/** The login of the account owning an installation (null when unknown). */
 export async function getInstallationAccount(
   appId: string,
   privateKey: string,
   installationId: number,
 ): Promise<string | null> {
-  if (!appId || !privateKey) return null;
+  return (await getInstallationDetails(appId, privateKey, installationId))?.login ?? null;
+}
+
+/**
+ * Whether a GitHub user may administer an App installation. The Setup URL's
+ * `installation_id` is attacker-controlled, so binding it to a group requires
+ * proof from the user's own token: the user is the installation's account, or
+ * an active admin of its organization. Merely having access to it (being
+ * listed in `/user/installations` as a collaborator) is not enough.
+ */
+export async function userManagesInstallation(
+  token: string,
+  userId: string,
+  _installationId: number,
+  account: InstallationAccount | null,
+): Promise<boolean> {
+  const headers = { ...API_HEADERS, Authorization: `Bearer ${token}` };
   try {
-    const jwt = await createAppJwt(appId, privateKey);
-    const res = await fetch(`https://api.github.com/app/installations/${installationId}`, {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { account?: { login?: string } };
-    return data.account?.login ?? null;
+    if (!account) return false;
+    if (account.type === "User") return String(account.id) === userId;
+    const res = await fetch(
+      `https://api.github.com/user/memberships/orgs/${encodeURIComponent(account.login)}`,
+      { headers },
+    );
+    if (!res.ok) return false;
+    const membership = (await res.json()) as { state?: string; role?: string };
+    return membership.state === "active" && membership.role === "admin";
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -74,6 +126,7 @@ export async function handleOAuthCallback(
   code: string,
   _state: string,
   kv: KVNamespace,
+  db?: D1Database,
 ): Promise<{ userId: string; login: string } | null> {
   const res = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -102,15 +155,18 @@ export async function handleOAuthCallback(
   const octokit = new Octokit({ auth: data.access_token });
   const { data: user } = await octokit.rest.users.getAuthenticated();
 
-  await saveToken(kv, user.id.toString(), data.access_token, 3600 * 10);
+  await saveToken(kv, user.id.toString(), data.access_token, 3600 * 10, db);
 
   return { userId: user.id.toString(), login: user.login };
 }
 
-export async function getUserOctokit(userId: string, kv: KVNamespace): Promise<Octokit | null> {
+export async function getUserOctokit(userId: string, kv: TokenSource): Promise<Octokit | null> {
   const token = await getToken(kv, userId);
   if (!token) return null;
-  return new Octokit({ auth: token });
+  // No automatic retries: the user's actions (a comment, a merge) are not
+  // idempotent, and a retry after a lost response would act twice. A failure
+  // is reported to the user instead, who can try again knowingly.
+  return new Octokit({ auth: token, retry: { enabled: false }, throttle: { enabled: false } });
 }
 
 /**
@@ -125,8 +181,84 @@ function mapGitHubError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-async function requireOctokit(kv: KVNamespace, githubUserId: string): Promise<Octokit> {
-  const octokit = await getUserOctokit(githubUserId, kv);
+/**
+ * The immutable user id GitHub has for `login` right now, or null when it is
+ * unknown (no such user, no answer). Looked up with the caller's own token.
+ */
+export async function resolveGitHubUserId(token: string, login: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "WebHooker",
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { id?: unknown; login?: unknown };
+    const sameLogin =
+      typeof data.login === "string" && data.login.toLowerCase() === login.toLowerCase();
+    return sameLogin && typeof data.id === "number" ? String(data.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A failure before anything was sent to GitHub (the user's token could not be
+ * read). Bot commands give such a command back for the platform to retry,
+ * instead of consuming it with an error reply.
+ */
+export class BeforeGitHubError extends Error {}
+
+/**
+ * Another run finished this command meanwhile (this one outlived its claim):
+ * nothing is written, and that run's "done" stays.
+ */
+export class CommandTakenError extends BeforeGitHubError {}
+
+/**
+ * GitHub refused the request (or none could be made for want of a token):
+ * nothing was done, so running the command again is safe. Anything else (a
+ * network failure, a 5xx) may have acted.
+ */
+export function githubRefused(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : "";
+  if (["GITHUB_TOKEN_EXPIRED", "GITHUB_FORBIDDEN", "GITHUB_NOT_FOUND"].includes(message)) {
+    return true;
+  }
+  const status = (err as { status?: unknown })?.status;
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
+ * `beforeWrite` runs once only the write itself is left (a bot records the
+ * command as done there, so a lost confirmation can never run the write
+ * again); its failure aborts with nothing done.
+ */
+export interface WriteHooks {
+  beforeWrite?: () => Promise<void>;
+}
+
+async function beforeWrite(hooks: WriteHooks | undefined): Promise<void> {
+  if (!hooks?.beforeWrite) return;
+  try {
+    await hooks.beforeWrite();
+  } catch (err) {
+    if (err instanceof BeforeGitHubError) throw err;
+    throw new BeforeGitHubError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function requireOctokit(kv: TokenSource, githubUserId: string): Promise<Octokit> {
+  let octokit: Octokit | null;
+  try {
+    octokit = await getUserOctokit(githubUserId, kv);
+  } catch (err) {
+    throw new BeforeGitHubError(err instanceof Error ? err.message : String(err));
+  }
   if (!octokit) throw new Error("GITHUB_TOKEN_EXPIRED");
   return octokit;
 }
@@ -136,23 +268,25 @@ async function requireOctokit(kv: KVNamespace, githubUserId: string): Promise<Oc
  * so the comment shows up under their own identity instead of the bot.
  */
 export async function commentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
   issueNumber: number,
   body: string,
+  hooks?: WriteHooks,
 ): Promise<{ htmlUrl: string; login: string }> {
   const octokit = await requireOctokit(kv, githubUserId);
+  await beforeWrite(hooks);
   try {
-    const { data: me } = await octokit.rest.users.getAuthenticated();
+    // The author comes with the created comment: no separate `/user` request.
     const res = await octokit.rest.issues.createComment({
       owner,
       repo,
       issue_number: issueNumber,
       body,
     });
-    return { htmlUrl: res.data.html_url, login: me.login };
+    return { htmlUrl: res.data.html_url, login: res.data.user?.login ?? "" };
   } catch (err) {
     throw mapGitHubError(err);
   }
@@ -160,7 +294,7 @@ export async function commentAsUser(
 
 /** Fetch a single issue comment's current body (used to prefill the edit modal). */
 export async function getCommentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -177,7 +311,7 @@ export async function getCommentAsUser(
 
 /** Edit an existing issue/PR comment. GitHub enforces permission (403 if not allowed). */
 export async function editCommentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -200,7 +334,7 @@ export async function editCommentAsUser(
 
 /** Delete an existing issue/PR comment. GitHub enforces permission (403 if not allowed). */
 export async function deleteCommentAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
@@ -216,14 +350,16 @@ export async function deleteCommentAsUser(
 
 /** Merge a pull request as the linked GitHub user. GitHub enforces permission (403 if not allowed). */
 export async function mergePullRequestAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
   pullNumber: number,
   method: "merge" | "squash" | "rebase" = "squash",
+  hooks?: WriteHooks,
 ): Promise<void> {
   const octokit = await requireOctokit(kv, githubUserId);
+  await beforeWrite(hooks);
   try {
     await octokit.rest.pulls.merge({
       owner,
@@ -238,13 +374,15 @@ export async function mergePullRequestAsUser(
 
 /** Close a pull request as the linked GitHub user. GitHub enforces permission (403 if not allowed). */
 export async function closePullRequestAsUser(
-  kv: KVNamespace,
+  kv: TokenSource,
   githubUserId: string,
   owner: string,
   repo: string,
   pullNumber: number,
+  hooks?: WriteHooks,
 ): Promise<void> {
   const octokit = await requireOctokit(kv, githubUserId);
+  await beforeWrite(hooks);
   try {
     await octokit.rest.pulls.update({
       owner,

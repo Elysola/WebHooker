@@ -19,6 +19,9 @@ md.renderer.rules.strong_open = (): string => "<b>";
 md.renderer.rules.strong_close = (): string => "</b>";
 md.renderer.rules.em_open = (): string => "<i>";
 md.renderer.rules.em_close = (): string => "</i>";
+// Telegram's HTML has no <br>: a Markdown hard break ("two spaces, newline")
+// would get the whole message rejected. A plain newline breaks the line there.
+md.renderer.rules.hardbreak = (): string => "\n";
 
 function mdToHtml(s: string): string {
   return md.renderInline(s);
@@ -37,26 +40,53 @@ function formatTimestamp(ts?: string): string {
  * an incomplete trailing tag and closes every tag still open at the cut
  * point, so parse_mode HTML never rejects the message.
  */
+/**
+ * Clamp HTML to `max` characters as Telegram counts them — the text shown,
+ * tags left out and an entity (`&amp;`) as one character — keeping tags and
+ * entities whole and closing the tags still open (an ellipsis marks the cut).
+ */
 function capHtml(text: string, max: number): string {
-  if (text.length <= max) return text;
-  let cut = text.slice(0, max).replace(/<[^>]*$/u, "");
   const stack: string[] = [];
-  const re = /<(\/?)([a-z]+)(?:\s[^>]*)?>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(cut)) !== null) {
-    const tag = m[2]!;
-    if (m[1] === "/") {
-      const open = stack.lastIndexOf(tag);
-      if (open >= 0) stack.splice(open);
-    } else {
-      stack.push(tag);
+  let shown = 0;
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "<") {
+      const end = text.indexOf(">", i);
+      if (end < 0) break;
+      const m = /^<(\/?)([a-z]+)/.exec(text.slice(i, end + 1));
+      if (m) {
+        const tag = m[2]!;
+        if (m[1] === "/") {
+          const open = stack.lastIndexOf(tag);
+          if (open >= 0) stack.splice(open);
+        } else {
+          stack.push(tag);
+        }
+      }
+      i = end + 1;
+      continue;
     }
+    const entity =
+      text[i] === "&" ? /^&(?:#\d+|#x[0-9a-f]+|[a-z]+);/i.exec(text.slice(i, i + 12)) : null;
+    const code = text.charCodeAt(i);
+    // A surrogate pair counts (and is cut) as the two code units it is.
+    const step = entity ? entity[0].length : code >= 0xd800 && code <= 0xdbff ? 2 : 1;
+    const weight = entity ? 1 : step;
+    // One character is kept for the ellipsis.
+    if (shown + weight > max - 1) {
+      const rest = text.slice(i).replace(/<[^>]*>/g, "");
+      // What is left fits after all (no ellipsis needed).
+      if (shown + rest.replace(/&(?:#\d+|#x[0-9a-f]+|[a-z]+);/gi, "x").length <= max) return text;
+      const closers = [...stack]
+        .reverse()
+        .map((tag) => `</${tag}>`)
+        .join("");
+      return `${text.slice(0, i)}…${closers}`;
+    }
+    shown += weight;
+    i += step;
   }
-  const closers = stack
-    .reverse()
-    .map((tag) => `</${tag}>`)
-    .join("");
-  return `${cut}…${closers}`;
+  return text;
 }
 
 export function renderNeutralMessage(message: NeutralMessage): string {
@@ -76,7 +106,7 @@ export function renderNeutralMessage(message: NeutralMessage): string {
   if (message.author) {
     const name = mdToHtml(message.author.name);
     const author = message.author.url ? `<a href="${esc(message.author.url)}">${name}</a>` : name;
-    parts.push(`👤 ${author}`);
+    parts.push(message.emoji === false ? author : `👤 ${author}`);
   }
 
   if (message.description) {

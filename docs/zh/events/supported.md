@@ -42,7 +42,8 @@ WebHooker 支持 28 种 GitHub webhook 事件类型，每种都有专用的格�
 
 | 颜色             | 事件                                                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 绿色 (`#2da44e`) | push、PR 打开/可审查、issue 打开、工作流成功、发布已发布、检查成功、审查已批准、部署成功、成员添加、里程碑关闭、讨论已回答      |
+| 绿色 (`#2da44e`) | PR 打开/可审查、issue 打开、工作流成功、发布已发布、检查成功、审查已批准、部署成功、成员添加、里程碑关闭、讨论已回答            |
+| 绿色 (`#2ea44f`) | push                                                                                                                            |
 | 红色 (`#f85149`) | PR 关闭、issue 关闭、工作流失败、发布已删除、delete、检查失败、审查请求修改、部署失败、成员移除、代码扫描/Dependabot 严重与高危 |
 | 紫色 (`#8957e5`) | PR 合并、label、discussion                                                                                                      |
 | 蓝色 (`#1f6feb`) | PR（其他操作）、issue 重新打开、fork、里程碑打开                                                                                |
@@ -60,7 +61,7 @@ WebHooker 支持 28 种 GitHub webhook 事件类型，每种都有专用的格�
 
 ## 原地消息更新
 
-`workflow_run` / `check_run` 事件（queued → running → success/failure）只发送一条消息，后续每个阶段会**原地编辑**该消息，而不是发送新消息。消息的链接预览、作者和字段布局保持不变，仅刷新状态、结论 emoji、耗时和标题。Discord（`editMessage`）和 Telegram（`editMessageText` / `editMessageCaption`）均支持。`check_run` 以 check 名 + commit SHA 追踪（回退到 run id），因此每个阶段都会换新 run id 的提供方（例如 Cloudflare Pages）仍会编辑同一条消息。
+`workflow_run` / `check_run` 事件（queued → running → success/failure）只发送一条消息，后续每个阶段会**原地编辑**该消息，而不是发送新消息。每次编辑都按最新事件重新渲染整条消息。检查套件、部署（及其状态）、issue 评论、PR 审核与审核评论也以同样方式原地编辑。Discord（`editMessage`）、Telegram（`editMessageText` / `editMessageCaption`）与飞书均支持。`check_run` 以检查套件（或 App）+ check 名 + commit SHA 追踪（回退到 run id），因此每个阶段都会换新 run id 的提供方（例如 Cloudflare Pages）仍会编辑同一条消息，而不同 workflow 或 App 的同名检查各自独立。较早的阶段不会覆盖较新的阶段，已删除的评论与已撤销的审核会保持为该状态。
 
 `workflow_run` 消息还会附带带颜色的 **Jobs** 明细。由于 webhook 载荷本身不含作业列表（只有 `jobs_url`），Worker 会从 GitHub API 拉取——配置了 `GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY` 时用 GitHub App 安装令牌鉴权，否则匿名请求（公开仓库）。因此 App 需要 **Actions: read** 仓库权限。
 
@@ -68,11 +69,11 @@ WebHooker 支持 28 种 GitHub webhook 事件类型，每种都有专用的格�
 
 实操指南见[过滤器教程](../guide/filters)，包含完整示例。
 
-| 过滤器    | 适用事件                                                                                                                                                       |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `event`   | 所有事件                                                                                                                                                       |
-| `repo`    | 所有事件                                                                                                                                                       |
-| `actor`   | 所有事件                                                                                                                                                       |
-| `action`  | 载荷中包含 `action` 字段的事件                                                                                                                                 |
-| `branch`  | push、pull_request、pull_request_review、pull_request_review_comment、create、delete、workflow_run、workflow_job、check_suite、deployment、code_scanning_alert |
-| `keyword` | 所有事件（搜索完整载荷正文）                                                                                                                                   |
+| 过滤器    | 适用事件                                                                                                                                                                                     |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event`   | 所有事件                                                                                                                                                                                     |
+| `repo`    | 所有事件                                                                                                                                                                                     |
+| `actor`   | 所有事件                                                                                                                                                                                     |
+| `action`  | 载荷中包含 `action` 字段的事件                                                                                                                                                               |
+| `branch`  | push、pull_request、pull_request_review、pull_request_review_comment、create、delete、workflow_run、workflow_job、check_run、check_suite、deployment、deployment_status、code_scanning_alert |
+| `keyword` | 所有事件（搜索完整载荷正文）                                                                                                                                                                 |

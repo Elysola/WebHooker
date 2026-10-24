@@ -317,6 +317,7 @@ describe("message title spec", () => {
           head_sha: "abc123def456",
           status: "in_progress",
           conclusion: null,
+          check_suite: { id: 7 },
         },
         repository: repo,
         sender,
@@ -331,13 +332,31 @@ describe("message title spec", () => {
           head_sha: "abc123def456",
           status: "completed",
           conclusion: "failure",
+          check_suite: { id: 7 },
         },
         repository: repo,
         sender,
       }),
     );
-    expect(running.updateKey).toBe("check_run:acme/widget:Cloudflare Pages:abc123def456");
+    expect(running.updateKey).toBe("check_run:acme/widget:7:Cloudflare Pages:abc123def456");
     expect(failed.updateKey).toBe(running.updateKey);
+    // A same-named check of another suite (workflow / app) has its own message.
+    const other = formatEvent(
+      route,
+      event("check_run", {
+        check_run: {
+          id: 44,
+          name: "Cloudflare Pages",
+          head_sha: "abc123def456",
+          status: "completed",
+          conclusion: "success",
+          check_suite: { id: 8 },
+        },
+        repository: repo,
+        sender,
+      }),
+    );
+    expect(other.updateKey).not.toBe(running.updateKey);
   });
 
   it("check_suite shows conclusion, service, branch and commit", () => {

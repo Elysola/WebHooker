@@ -56,3 +56,16 @@ export function headersFrom(event: H3Event): Record<string, string> {
   });
   return out;
 }
+
+/** Largest body the bot callback routes read (each handler checks it again). */
+export const MAX_CALLBACK_BODY = 1024 * 1024;
+
+/**
+ * A body declared larger than `max` bytes: answered 413 before the route
+ * reads (and copies) it. Bodies without a declared length are still checked
+ * by the handler once read.
+ */
+export function declaresBodyOver(event: H3Event, max = MAX_CALLBACK_BODY): boolean {
+  const length = Number(event.headers.get("content-length"));
+  return Number.isFinite(length) && length > max;
+}

@@ -1,4 +1,6 @@
+import { groupScopeClause, type GroupScope } from "./send-log";
 import { log } from "./log";
+import { isMissingTable } from "../storage/d1";
 
 export interface AuditEntry {
   id?: number;
@@ -10,6 +12,11 @@ export interface AuditEntry {
   targetType?: string;
   targetId?: string;
   groupId?: string;
+  /**
+   * Immutable instance of the group (write-only): the entry is filed under
+   * whatever id that instance has when it is written.
+   */
+  groupInstance?: string;
   /** Free-form metadata. Never include secrets or message bodies. */
   detail?: Record<string, unknown>;
   ip?: string;
@@ -46,13 +53,20 @@ function toEntry(r: AuditRow): AuditEntry {
   };
 }
 
-/** Best-effort write; failures never break the business flow. */
+/**
+ * Best-effort write; failures never break the business flow.
+ *
+ * The group is resolved when the row is written, not when the action was
+ * decided: an entry landing after its group was renamed is filed under the
+ * new id (with the instance known), after a delete or a rename under none —
+ * never under an id another group may take over later.
+ */
 export async function recordAudit(db: D1Database, entry: AuditEntry): Promise<void> {
-  try {
-    await db
+  const insert = (groupSql: string, ...groupArgs: Array<string | null>): D1PreparedStatement =>
+    db
       .prepare(
         `INSERT INTO audit_logs (ts, actor_id, actor_login, action, target_type, target_id, group_id, detail, ip)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ${groupSql}, ?, ?)`,
       )
       .bind(
         entry.ts,
@@ -61,11 +75,31 @@ export async function recordAudit(db: D1Database, entry: AuditEntry): Promise<vo
         entry.action,
         entry.targetType ?? null,
         entry.targetId ?? null,
-        entry.groupId ?? null,
+        ...groupArgs,
         entry.detail ? JSON.stringify(entry.detail) : null,
         entry.ip ?? null,
-      )
-      .run();
+      );
+  try {
+    try {
+      if (entry.groupInstance) {
+        // The id given is tried first (a primary-key lookup); the groups are
+        // scanned only when it no longer holds that instance (renamed).
+        await insert(
+          "COALESCE((SELECT id FROM d1_groups WHERE id = ? AND json_valid(data) AND json_extract(data, '$.instance') = ?), (SELECT id FROM (SELECT id, CASE WHEN json_valid(data) THEN data ELSE '{}' END AS data FROM d1_groups) WHERE json_extract(data, '$.instance') = ?))",
+          entry.groupId ?? "",
+          entry.groupInstance,
+          entry.groupInstance,
+        ).run();
+      } else if (entry.groupId) {
+        await insert("(SELECT id FROM d1_groups WHERE id = ?)", entry.groupId).run();
+      } else {
+        await insert("?", null).run();
+      }
+    } catch (err) {
+      // Groups not in D1 (an unmigrated database): file it as given.
+      if (!isMissingTable(err) || !entry.groupId) throw err;
+      await insert("?", entry.groupId).run();
+    }
   } catch (err) {
     log.warn({ err, action: entry.action }, "Failed to record audit entry");
   }
@@ -73,23 +107,22 @@ export async function recordAudit(db: D1Database, entry: AuditEntry): Promise<vo
 
 export async function getAuditLog(
   db: D1Database,
-  opts: { groupId?: string; limit?: number } = {},
+  opts: { groupId?: GroupScope; limit?: number } = {},
 ): Promise<AuditEntry[]> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   try {
-    if (opts.groupId) {
-      const { results } = await db
-        .prepare(`SELECT ${COLUMNS} FROM audit_logs WHERE group_id = ? ORDER BY ts DESC LIMIT ?`)
-        .bind(opts.groupId, limit)
-        .all<AuditRow>();
-      return results.map(toEntry);
-    }
+    const clause = groupScopeClause(opts.groupId);
     const { results } = await db
-      .prepare(`SELECT ${COLUMNS} FROM audit_logs ORDER BY ts DESC LIMIT ?`)
-      .bind(limit)
+      .prepare(
+        `SELECT ${COLUMNS} FROM audit_logs${clause ? ` WHERE ${clause.sql}` : ""} ORDER BY ts DESC LIMIT ?`,
+      )
+      .bind(...(clause?.args ?? []), limit)
       .all<AuditRow>();
     return results.map(toEntry);
   } catch (err) {
+    // Only a table not created yet means "nothing yet"; any other failure
+    // must reach the caller, not pass for an empty history.
+    if (!isMissingTable(err)) throw err;
     log.warn({ err }, "Failed to load audit log");
     return [];
   }

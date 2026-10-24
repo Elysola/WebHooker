@@ -184,7 +184,13 @@ export function formatCheckRun(
     details_url?: string;
     status?: string;
     output?: { title?: string; summary?: string };
+    check_suite?: { id?: number };
+    app?: { id?: number };
   };
+  // Phases of one check (a fresh run id each, as Cloudflare Pages sends them)
+  // share a suite; two checks of the same name from different workflows or
+  // apps do not — they never share a message.
+  const owner = checkRun.check_suite?.id ?? checkRun.app?.id;
 
   const status = workflowStatus(checkRun.status, checkRun.conclusion);
   const emoji = WORKFLOW_CONCLUSION_EMOJI[status] ?? "⏳";
@@ -226,9 +232,14 @@ export function formatCheckRun(
       url: checkRun.html_url,
       color: GITHUB_COLORS[colorKey],
       fields,
+      // Chains tracked before the suite joined the key.
+      legacyUpdateKey:
+        repo && checkRun.name && checkRun.head_sha && owner != null
+          ? `check_run:${repo}:${checkRun.name}:${checkRun.head_sha}`
+          : undefined,
       updateKey:
         repo && checkRun.name && checkRun.head_sha
-          ? `check_run:${repo}:${checkRun.name}:${checkRun.head_sha}`
+          ? `check_run:${repo}:${owner != null ? `${owner}:` : ""}${checkRun.name}:${checkRun.head_sha}`
           : repo && checkRun.id != null
             ? `check_run:${repo}:${checkRun.id}`
             : undefined,

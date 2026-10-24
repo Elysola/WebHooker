@@ -17,9 +17,11 @@ https://your-worker.workers.dev
 | `POST`   | `/webhook/:groupId`         | Per-group secret  | Per-group webhook ingress (only that group's routes fire)          |
 | `POST`   | `/discord/interactions`     | Ed25519 signature | Discord interactions (slash commands, buttons, modals)             |
 | `POST`   | `/telegram/webhook`         | Secret token      | Telegram updates (bot `/gh` commands)                              |
+| `POST`   | `/feishu/webhook`           | Feishu signature  | Feishu events (bot `/gh` commands, card buttons)                   |
 | `GET`    | `/api/richheader`           | None              | Open Graph page for the Telegram avatar link-preview card          |
 | `GET`    | `/auth/github`              | None              | Start GitHub OAuth flow                                            |
 | `GET`    | `/auth/github/callback`     | None              | OAuth callback                                                     |
+| `POST`   | `/auth/github/link`         | Link nonce        | Confirm a bot account link (from the confirmation page)            |
 | `GET`    | `/auth/github/install`      | Admin session     | Post-install choice page: bind the installation to a group         |
 | `POST`   | `/auth/github/install/bind` | Admin session     | Provision the chosen installation binding                          |
 | `DELETE` | `/auth/token/:userId`       | Admin session     | Revoke user token                                                  |
@@ -74,27 +76,31 @@ Accepts GitHub webhook payloads. Requires valid `X-Hub-Signature-256` header.
 
 ```json
 {
-  "ok": true
+  "ok": true,
+  "requestId": "…"
 }
 ```
 
-When `X-GitHub-Delivery` is present and the same delivery was already processed within the last 5 minutes, the worker responds `200 { "ok": true, "duplicate": true }` without re-dispatching.
+`requestId` is the correlation id written to the worker's logs. With inline dispatch (no queue), an event whose targets failed permanently is still answered `200`, with `"failed": true` added.
+
+When `X-GitHub-Delivery` is present and the same delivery was already accepted, the worker responds `200 { "ok": true, "duplicate": true }` without re-dispatching; while the first copy is still being processed, a redelivery gets `503` so the sender retries later.
 
 **Error Responses:**
 
-| Status | Body                             | Cause                                  |
-| ------ | -------------------------------- | -------------------------------------- |
-| `401`  | `{"error": "Invalid signature"}` | Signature verification failed          |
-| `400`  | `{"error": "Invalid event"}`     | Missing event header or malformed body |
-| `413`  | `{"error": "Request too large"}` | Body exceeds 1MB limit                 |
+| Status | Body                             | Cause                                                                                                                                                                                      |
+| ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `401`  | `{"error": "Invalid signature"}` | Signature verification failed                                                                                                                                                              |
+| `400`  | `{"error": "Invalid event"}`     | Missing event header or malformed body                                                                                                                                                     |
+| `413`  | `{"error": "Request too large"}` | Body exceeds 1MB limit                                                                                                                                                                     |
+| `503`  | `{"error": …}`                   | Not accepted yet — the queue rejected the event, a target failed transiently (inline dispatch), the same delivery is still being processed, or storage failed; the sender should redeliver |
 
 ### Per-Group Webhook (`POST /webhook/:groupId`)
 
-Verifies the payload against the **group's** secret (KV `tenant:{groupId}`, generated from the console — Webhook endpoint panel) instead of the global secrets, and dispatches only into that group's routes. Works for GitHub (`X-Hub-Signature-256`), Gitea (`X-Gitea-Signature`) and custom (`X-WebHooker-Signature`) senders. Returns `404` when the group does not exist or has no secret configured.
+Verifies the payload against the **group's** secret (stored with the group in D1, generated from the console — Webhook endpoint panel) instead of the global secrets, and dispatches only into that group's routes. Works for GitHub (`X-Hub-Signature-256`), Gitea (`X-Gitea-Signature`) and custom (`X-WebHooker-Signature`) senders. Returns `404` when the group does not exist or has no secret configured, and `503` when the group's stored configuration cannot be read.
 
 ### Custom Webhooks
 
-Any JSON payload signed with `X-WebHooker-Signature: sha256=<hex>` (HMAC-SHA256 of the raw body, group or global secret) becomes a `custom` event. Route it with a route whose filter is `event: custom`. Optional `X-WebHooker-Timestamp` + `X-WebHooker-Nonce` headers enable replay protection (signature over `{timestamp}.{nonce}.{body}`, ±5 min window, nonce dedup). Payload schema: see [Configuration → Custom webhooks](../guide/ingress.md#custom-webhooks).
+Any JSON object signed with `X-WebHooker-Signature: sha256=<hex>` (HMAC-SHA256 of the raw body, group or global secret) becomes a `custom` event. Route it with a route whose filter is `event: custom`. Optional `X-WebHooker-Timestamp` + `X-WebHooker-Nonce` headers enable replay protection (signature over `{timestamp}.{nonce}.{body}`, ±5 min window, nonce dedup). Payload schema: see [Configuration → Custom webhooks](../guide/ingress.md#custom-webhooks).
 
 ### GitHub App Installation Events
 
@@ -109,7 +115,7 @@ The primary flow is the App's **Setup URL** — set it to `{BASE_URL}/auth/githu
 
 ## Error Format
 
-All error responses follow the format:
+Error responses of the webhook, admin, OAuth and action endpoints follow the format below; the bot callbacks (`/discord/interactions`, `/telegram/webhook`, `/feishu/webhook`) answer errors with a plain-text body:
 
 ```json
 {

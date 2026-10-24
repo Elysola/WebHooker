@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "bun:test";
 import {
   handleOAuthStart,
   handleInstallPage,
@@ -9,6 +9,7 @@ import {
 import { createAdminSession, adminCookie } from "../server/lib/web/session";
 import { loadGroups, invalidateGroupsCache } from "../server/lib/web/groups";
 import { getInstallationAccount } from "../server/lib/github/oauth";
+import { saveToken } from "../server/lib/github/store";
 import { makeEvent, responseStatus, responseHeader } from "./helpers";
 import type { Env } from "../server/lib/types";
 
@@ -46,13 +47,40 @@ function createMockDB(): D1Database {
   } as unknown as D1Database;
 }
 
+/** App credentials, so the install flow can look the installation's account up. */
+let appCredentials: Partial<Env> = {};
+
 function createEnv(overrides: Partial<Env> = {}): Env {
   return {
     GITHUB_WEBHOOK_SECRET: "secret",
     KV: createMockKV(),
     DB: createMockDB(),
+    ...appCredentials,
     ...overrides,
   };
+}
+
+/** The signed-in test user's role in the installation's organization. */
+let orgRole = "admin";
+
+/** GitHub API stub: the installation lookup and the user's org membership. */
+function githubApiMock(input: RequestInfo | URL): Promise<Response> {
+  const url = String(input);
+  const body = url.includes("/user/memberships/orgs/myorg")
+    ? { state: "active", role: orgRole }
+    : { id: 555, account: { login: "myorg", id: 9, type: "Organization" } };
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+}
+
+/** A session for alice (GitHub id 1001) with a stored OAuth token. */
+async function signIn(kv: KVNamespace): Promise<string> {
+  await saveToken(kv, "1001", "gho_alice", 3600);
+  return adminCookie(await createAdminSession(kv, "1001", "alice"));
 }
 
 function bufToPem(buf: ArrayBuffer): string {
@@ -122,17 +150,15 @@ describe("getInstallationAccount", () => {
 describe("GET /auth/github/install", () => {
   const restoredFetch = globalThis.fetch;
 
+  beforeAll(async () => {
+    const { appId, pem } = await makeAppKeyPair();
+    appCredentials = { GITHUB_APP_ID: appId, GITHUB_PRIVATE_KEY: pem };
+  });
+
   beforeEach(() => {
     invalidateGroupsCache();
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      void init;
-      return Promise.resolve(
-        new Response(JSON.stringify({ id: 555, account: { login: "myorg" } }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    };
+    orgRole = "admin";
+    globalThis.fetch = githubApiMock;
   });
 
   afterEach(() => {
@@ -172,10 +198,10 @@ describe("GET /auth/github/install", () => {
       ]),
     );
     const env = createEnv({ KV: kv });
-    const sessionId = await createAdminSession(kv, "1001", "alice");
+    const cookie = await signIn(kv);
 
     const event = makeEvent("/auth/github/install?installation_id=555&setup_action=install", {
-      headers: { cookie: adminCookie(sessionId), accept: "text/html" },
+      headers: { cookie, accept: "text/html" },
       env,
     });
     const html = (await handleInstallPage(event)) as string;
@@ -183,6 +209,19 @@ describe("GET /auth/github/install", () => {
     expect(html).toContain("My Team");
     expect(html).toContain('value="mine"');
     expect(html).not.toContain('value="theirs"');
+  });
+
+  it("refuses an installation the user cannot manage", async () => {
+    const kv = createMockKV();
+    orgRole = "member";
+    const env = createEnv({ KV: kv });
+    const cookie = await signIn(kv);
+    const event = makeEvent("/auth/github/install?installation_id=555", {
+      headers: { cookie, accept: "text/html" },
+      env,
+    });
+    await handleInstallPage(event);
+    expect(responseHeader(event, "location")).toBe("/admin?error=install-forbidden");
   });
 
   it("rejects a missing installation id", async () => {
@@ -197,15 +236,8 @@ describe("POST /auth/github/install/bind", () => {
 
   beforeEach(() => {
     invalidateGroupsCache();
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      void init;
-      return Promise.resolve(
-        new Response(JSON.stringify({ id: 555, account: { login: "myorg" } }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    };
+    orgRole = "admin";
+    globalThis.fetch = githubApiMock;
   });
 
   afterEach(() => {
@@ -242,9 +274,9 @@ describe("POST /auth/github/install/bind", () => {
       ]),
     );
     const env = createEnv({ KV: kv });
-    const sessionId = await createAdminSession(kv, "1001", "alice");
+    const cookie = await signIn(kv);
 
-    const event = bindEvent(env, adminCookie(sessionId), { installation_id: "555", group: "mine" });
+    const event = bindEvent(env, cookie, { installation_id: "555", group: "mine" });
     await handleInstallBind(event);
     expect(responseStatus(event)).toBe(302);
     expect(responseHeader(event, "location")).toBe("/admin?install=ok");
@@ -269,9 +301,9 @@ describe("POST /auth/github/install/bind", () => {
       ]),
     );
     const env = createEnv({ KV: kv });
-    const sessionId = await createAdminSession(kv, "1001", "alice");
+    const cookie = await signIn(kv);
 
-    const event = bindEvent(env, adminCookie(sessionId), {
+    const event = bindEvent(env, cookie, {
       installation_id: "555",
       group: "theirs",
     });
@@ -292,9 +324,9 @@ describe("POST /auth/github/install/bind", () => {
       GITHUB_APP_ID: appId,
       GITHUB_PRIVATE_KEY: pem,
     });
-    const sessionId = await createAdminSession(kv, "1001", "alice");
+    const cookie = await signIn(kv);
 
-    const event = bindEvent(env, adminCookie(sessionId), { installation_id: "555", group: "" });
+    const event = bindEvent(env, cookie, { installation_id: "555", group: "" });
     await handleInstallBind(event);
     expect(responseStatus(event)).toBe(302);
     expect(responseHeader(event, "location")).toBe("/admin?install=ok");
@@ -304,15 +336,61 @@ describe("POST /auth/github/install/bind", () => {
     expect(group).toBeDefined();
     expect(group?.installationId).toBe(555);
     expect(group?.name).toBe("myorg");
-    expect(group?.members).toContainEqual({ login: "alice", role: "owner" });
+    expect(group?.members).toContainEqual({
+      login: "alice",
+      role: "owner",
+      userId: expect.any(String),
+    });
+  });
+
+  it("refuses to bind an installation the user cannot manage", async () => {
+    const kv = createMockKV();
+    orgRole = "member";
+    await kv.put(
+      "config:groups",
+      JSON.stringify([
+        { id: "mine", name: "Mine", adminIds: [], members: [{ login: "alice", role: "owner" }] },
+      ]),
+    );
+    const env = createEnv({ KV: kv, ALLOW_SELF_SIGNUP: "1" });
+    const cookie = await signIn(kv);
+    for (const group of ["mine", ""]) {
+      const event = bindEvent(env, cookie, { installation_id: "555", group });
+      await handleInstallBind(event);
+      expect(responseHeader(event, "location")).toBe("/admin?error=install-forbidden");
+    }
+    const groups = await loadGroups(kv);
+    expect(groups.map((g) => [g.id, g.installationId])).toEqual([["mine", undefined]]);
+  });
+
+  it("never makes the installer an owner of a group someone already manages", async () => {
+    const kv = createMockKV();
+    await kv.put(
+      "config:groups",
+      JSON.stringify([
+        {
+          id: "inst-555",
+          name: "Taken",
+          adminIds: [],
+          installationId: 555,
+          members: [{ login: "bob", role: "owner" }],
+        },
+      ]),
+    );
+    const env = createEnv({ KV: kv, ALLOW_SELF_SIGNUP: "1" });
+    const cookie = await signIn(kv);
+    const event = bindEvent(env, cookie, { installation_id: "555", group: "" });
+    await handleInstallBind(event);
+    const group = (await loadGroups(kv)).find((g) => g.id === "inst-555");
+    expect(group?.members).toEqual([{ login: "bob", role: "owner" }]);
   });
 
   it("auto-creates inst-{id} without joining members when self-signup is off", async () => {
     const kv = createMockKV();
     const env = createEnv({ KV: kv });
-    const sessionId = await createAdminSession(kv, "1001", "alice");
+    const cookie = await signIn(kv);
 
-    const event = bindEvent(env, adminCookie(sessionId), { installation_id: "555", group: "" });
+    const event = bindEvent(env, cookie, { installation_id: "555", group: "" });
     await handleInstallBind(event);
     expect(responseStatus(event)).toBe(302);
     const groups = await loadGroups(kv);
@@ -359,5 +437,43 @@ describe("oauth misc", () => {
     const result = (await handleTokenDelete(event, "123")) as { error?: string };
     expect(responseStatus(event)).toBe(401);
     expect(result.error).toBe("Unauthorized");
+  });
+
+  it("lets users delete only their own token", async () => {
+    const kv = createMockKV();
+    const env = createEnv({ KV: kv });
+    const cookie = await signIn(kv);
+    await saveToken(kv, "2002", "gho_bob", 3600);
+    const other = makeEvent("/auth/token/2002", { method: "DELETE", headers: { cookie }, env });
+    await handleTokenDelete(other, "2002");
+    expect(responseStatus(other)).toBe(403);
+    expect(await kv.get("token:2002")).not.toBeNull();
+    const own = makeEvent("/auth/token/1001", { method: "DELETE", headers: { cookie }, env });
+    await handleTokenDelete(own, "1001");
+    expect(responseStatus(own)).toBe(200);
+    expect(await kv.get("token:1001")).toBeNull();
+  });
+
+  it("rejects a browser callback whose state was started in another browser", async () => {
+    const kv = createMockKV();
+    const env = createEnv({ KV: kv });
+    await kv.put(
+      "state:abc",
+      JSON.stringify({ redirectTo: "/admin", expiresAt: Date.now() + 60_000 }),
+    );
+    const event = makeEvent("/auth/github/callback?code=c&state=abc", {
+      headers: { accept: "text/html" },
+      env,
+    });
+    const result = (await handleOAuthCallback(event)) as { error?: string };
+    expect(responseStatus(event)).toBe(400);
+    expect(result.error).toBe("Invalid or expired state");
+  });
+
+  it("sets the state cookie when starting the flow", async () => {
+    const env = createEnv({ GITHUB_CLIENT_ID: "client-1" });
+    const event = makeEvent("/auth/github?redirect=/admin", { env });
+    await handleOAuthStart(event);
+    expect(String(responseHeader(event, "set-cookie"))).toContain("wh_oauth_state=");
   });
 });

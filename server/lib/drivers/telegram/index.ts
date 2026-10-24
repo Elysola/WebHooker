@@ -1,7 +1,7 @@
 import MarkdownIt from "markdown-it";
 import type { RouteTarget, Env, NeutralMessage } from "../../types";
 import type { PlatformDriver, SendResult } from "../types";
-import { sendMessage, sendPhoto, editMessageText, editMessageCaption } from "./rest";
+import { sendMessage, editMessageText } from "./rest";
 import { renderNeutralMessage } from "./render";
 
 const markdown = new MarkdownIt({ html: false, linkify: false, breaks: false, typographer: false });
@@ -23,6 +23,19 @@ function richHeaderUrl(message: NeutralMessage, avatar: string, host: string): s
   return `${host.replace(/\/+$/, "")}/api/richheader?${params.toString()}`;
 }
 
+/**
+ * The avatar shown above the text as a link preview: the rich-header card
+ * when a host serves it, the plain (small) avatar image otherwise. Messages
+ * are always text messages (never photos with captions), so every edit is an
+ * `editMessageText` with the full 4096-character budget.
+ */
+function previewUrl(message: NeutralMessage, env: Env): string | undefined {
+  const avatar = message.author?.iconUrl;
+  if (!avatar) return undefined;
+  const richHeaderHost = env.TELEGRAM_RICH_HEADER_HOST ?? env.BASE_URL;
+  return richHeaderHost ? richHeaderUrl(message, avatar, richHeaderHost) : smallAvatar(avatar);
+}
+
 export class TelegramDriver implements PlatformDriver {
   readonly id = "telegram";
 
@@ -33,16 +46,7 @@ export class TelegramDriver implements PlatformDriver {
     }
     const token = env.TELEGRAM_TOKEN ?? "";
     const text = renderNeutralMessage(message);
-    const avatar = message.author?.iconUrl;
-    const richHeaderHost = env.TELEGRAM_RICH_HEADER_HOST ?? env.BASE_URL;
-    if (avatar && richHeaderHost) {
-      const rhUrl = richHeaderUrl(message, avatar, richHeaderHost);
-      return sendMessage(token, chatId, text, target.topicId, rhUrl);
-    }
-    if (avatar) {
-      return sendPhoto(token, chatId, smallAvatar(avatar), text, target.topicId);
-    }
-    return sendMessage(token, chatId, text, target.topicId);
+    return sendMessage(token, chatId, text, target.topicId, previewUrl(message, env));
   }
 
   async edit(
@@ -57,15 +61,15 @@ export class TelegramDriver implements PlatformDriver {
     }
     const token = env.TELEGRAM_TOKEN ?? "";
     const text = renderNeutralMessage(message);
-    const avatar = message.author?.iconUrl;
-    const richHeaderHost = env.TELEGRAM_RICH_HEADER_HOST ?? env.BASE_URL;
-    if (avatar && richHeaderHost) {
-      const rhUrl = richHeaderUrl(message, avatar, richHeaderHost);
-      return editMessageText(token, chatId, messageId, text, target.topicId, rhUrl);
-    }
-    if (avatar) {
-      return editMessageCaption(token, chatId, messageId, text, target.topicId);
-    }
-    return editMessageText(token, chatId, messageId, text, target.topicId);
+    // A photo sent by an older version has no text to edit; Telegram's error
+    // then makes dispatch send a fresh message instead.
+    return editMessageText(
+      token,
+      chatId,
+      messageId,
+      text,
+      target.topicId,
+      previewUrl(message, env),
+    );
   }
 }

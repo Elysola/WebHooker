@@ -25,22 +25,24 @@ app/                     # Vue 3 UI（Nuxt app 目录）
 server/                  # Nitro 服务器（H3 处理器位于 server/routes/）
 ├── routes/              # /health、/webhook[/:groupId]、/discord/interactions、/telegram/webhook、
 │                        # /auth/github*、/admin/{login,logout,invite,api/**}、/api/{comment,merge,close,react,richheader}
-├── tasks/               # 定时任务 (cron */5)：discord-sync、telegram-sync、audit-prune
+├── tasks/               # 定时任务 (cron */5)：discord-sync、telegram-sync、audit-prune、storage-prune
 ├── error-handler.ts     # JSON 错误处理器
 └── lib/
     ├── types.ts         # Env、Config、Route、Filter、Group、WebhookEvent、NeutralMessage
-    ├── config.ts        # 从 KV 加载路由（未设置时返回 []），从 env 构建 Config
+    ├── config.ts        # 绑定 D1 配置存储，读取路由/分组（最新或缓存），从 env 构建 Config
     ├── core/
     │   └── dispatch.ts  # 平台中立分发：匹配路由 → formatEvent → getDriver().send/edit
     ├── events/          # 与提供方无关的路由匹配
-    │   └── match.ts     # matchRoute、eventOwners、extractBranch、关键词过滤
+    │   ├── match.ts     # matchRoute、eventOwners
+    │   └── filter-ast.ts # 过滤器求值（扁平过滤器 + all/any/not AST）、extractBranch、关键词搜索、RE2 模式
     ├── providers/       # Forge webhook 提供方（验证 + 解析/归一化）
     │   ├── types.ts     # Provider 接口（matches/verify/parse）
     │   ├── index.ts     # detectProvider() 注册表（github、gitea、custom）
     │   ├── github/      # X-GitHub-Event + X-Hub-Signature-256
     │   └── gitea/       # X-Gitea-Event + X-Gitea-Signature（归一化载荷）
     ├── formatters/      # 平台中立格式化器（产出 NeutralMessage）
-    │   ├── index.ts     # formatEvent：28 事件 switch + custom → NeutralMessage + re-export
+    │   ├── index.ts     # formatEvent：构建上下文，从注册表找到格式化器 → NeutralMessage
+    │   ├── registry.ts  # eventFormatters[]：事件名 → 格式化器
     │   ├── colors.ts    # GITHUB_COLORS + WORKFLOW_CONCLUSION_EMOJI
     │   ├── helpers.ts   # emojiPrefix、T、buildMessage、commitLink/branchLink/tagLink
     │   └── *.ts         # push、pull-request、issues、comments、workflow、release、create、repo、
@@ -48,7 +50,7 @@ server/                  # Nitro 服务器（H3 处理器位于 server/routes/�
     │                    # discussion、repository、security、generic、ping、custom
     ├── drivers/         # 平台驱动（可插拔推送目标）
     │   ├── types.ts     # PlatformDriver 接口 + SendResult（send + edit）
-    │   ├── index.ts     # getDriver() 注册表（discord + telegram）
+    │   ├── index.ts     # getDriver() 注册表（discord + telegram + feishu）
     │   ├── discord/     # index.ts (驱动)、render.ts (NeutralMessage → embed)、
     │   │                # rest.ts、interactions.ts、commands.ts
     │   └── telegram/    # index.ts (驱动)、render.ts (NeutralMessage → Telegram HTML)、
@@ -127,8 +129,8 @@ curl http://localhost:8787/health
 1. 将事件类型添加到 `server/lib/formatters/colors.ts` 中的 `GITHUB_COLORS`（如果需要新颜色）
 2. 将操作标签添加到 `server/lib/lib/locales/en.ts` 与 `server/lib/lib/locales/zh.ts` 的翻译字典（如果有新操作）
 3. 在 `server/lib/formatters/` 中创建 `formatEventType` 函数
-4. 将 case 添加到 `server/lib/formatters/index.ts` 中的 `formatEvent` switch 语句
-5. 如果事件包含分支信息，更新 `server/lib/events/match.ts` 中的 `extractBranch`
+4. 在 `server/lib/formatters/registry.ts` 的 `eventFormatters` 中注册（`{ events: ["your_event"], format: (c) => … }`）
+5. 如果事件包含分支信息，更新 `server/lib/events/filter-ast.ts` 中的 `extractBranch`
 6. 将事件添加到 `docs/events/supported.md` 与 `docs/zh/events/supported.md` 文档中
 7. 将事件添加到 README（`README.md` 与 `README.zh.md`）的事件表与 GitHub App 事件订阅列表中
 8. 在 GitHub App 设置中订阅该事件

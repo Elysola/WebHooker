@@ -296,6 +296,20 @@ describe("ensureInstallationGroup", () => {
 });
 
 describe("tenant webhook secrets", () => {
+  const G1 = { id: "g1", instance: "inst-g1" };
+
+  it("never lets a group created later adopt a secret left under its id", async () => {
+    const kv = createMockKV();
+    await kv.put("tenant:g1", "old-secret");
+    expect(await getTenantSecret(kv, G1)).toBeNull();
+    // The group that had the id before instances still uses its old secret,
+    // under whatever id it has now — and without copying it anywhere.
+    expect(await getTenantSecret(kv, { ...G1, id: "moved", legacyId: "g1" })).toBe("old-secret");
+    // A pre-instance group renamed to the id later never adopts it.
+    expect(await getTenantSecret(kv, { ...G1, legacyId: "other" })).toBeNull();
+    expect(await kv.get("tenant:i:" + G1.instance)).toBeNull();
+  });
+
   it("generates 64-char hex secrets", () => {
     const s = generateTenantSecret();
     expect(s).toMatch(/^[0-9a-f]{64}$/);
@@ -303,19 +317,19 @@ describe("tenant webhook secrets", () => {
 
   it("creates, reads, and deletes a tenant secret", async () => {
     const kv = createMockKV();
-    expect(await getTenantSecret(kv, "g1")).toBeNull();
-    const secret = await setTenantSecret(kv, "g1");
-    expect(await getTenantSecret(kv, "g1")).toBe(secret);
-    await deleteTenantSecret(kv, "g1");
-    expect(await getTenantSecret(kv, "g1")).toBeNull();
+    expect(await getTenantSecret(kv, G1)).toBeNull();
+    const secret = await setTenantSecret(kv, G1);
+    expect(await getTenantSecret(kv, G1)).toBe(secret);
+    await deleteTenantSecret(kv, G1);
+    expect(await getTenantSecret(kv, G1)).toBeNull();
   });
 
   it("regenerating replaces the previous secret", async () => {
     const kv = createMockKV();
-    const a = await setTenantSecret(kv, "g1");
-    const b = await setTenantSecret(kv, "g1");
+    const a = await setTenantSecret(kv, G1);
+    const b = await setTenantSecret(kv, G1);
     expect(a).not.toBe(b);
-    expect(await getTenantSecret(kv, "g1")).toBe(b);
+    expect(await getTenantSecret(kv, G1)).toBe(b);
   });
 });
 

@@ -34,6 +34,29 @@ describe("platform contract", () => {
     }
     expect(embed!.footer).toBeDefined();
     expect(embed!.footer!.text.length).toBeLessThanOrEqual(MAX_FOOTER);
+    // Discord also caps the embed's combined text at 6000 characters.
+    const total =
+      embed!.title!.length +
+      embed!.description!.length +
+      embed!.footer!.text.length +
+      embed!.fields!.reduce((n, f) => n + f.name.length + f.value.length, 0);
+    expect(total).toBeLessThanOrEqual(6000);
+  });
+
+  test("discord render never lets content mention anyone but the route's roles", () => {
+    const out = renderDiscord({ title: "t", mentionRoleIds: ["123456789012345678"] });
+    expect(out.allowed_mentions).toEqual({ parse: [], roles: ["123456789012345678"] });
+  });
+
+  test("discord render drops buttons whose id exceeds Discord's limit", () => {
+    const out = renderDiscord({
+      title: "t",
+      actions: [
+        { id: `ghpr|merge|o|${"r".repeat(120)}|1`, label: "Merge", style: "primary" },
+        { id: "ghpr|close|o|r|1", label: "Close", style: "danger" },
+      ],
+    });
+    expect(out.components![0]!.components.map((c) => c.custom_id)).toEqual(["ghpr|close|o|r|1"]);
   });
 
   test("telegram render stays within the 4096-char cap", () => {

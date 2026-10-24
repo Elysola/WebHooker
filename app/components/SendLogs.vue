@@ -6,7 +6,7 @@
         <label class="filter-label">{{ t("logs.filterGroup") }}</label>
         <RcSelect
           class="filter-select"
-          :model-value="selectedGroupId || 'all'"
+          :model-value="selectedGroupId || '*'"
           :options="groupOptions"
           :disabled="loading"
           @update:model-value="onGroupFilter"
@@ -101,7 +101,7 @@ const detailLoading = ref(false);
 const detailError = ref("");
 
 const groupOptions = computed(() => [
-  { label: t("logs.allGroups"), value: "all" },
+  { label: t("logs.allGroups"), value: "*" }, // "*" is no group id: one named "all" stays selectable
   ...props.groups.map((g) => ({ label: g.name || g.id, value: g.id })),
 ]);
 
@@ -142,28 +142,37 @@ function refresh(): void {
 }
 
 function onGroupFilter(value: string): void {
-  emit("update:selectedGroupId", value === "all" ? "" : value);
+  emit("update:selectedGroupId", value === "*" ? "" : value);
   emit("filter");
 }
 
+/** Bumped by every open/close: only the latest detail request may land. */
+let detailRequest = 0;
+
 async function openDetail(l: SendRecord): Promise<void> {
   if (l.id == null) return;
+  const mine = ++detailRequest;
   detailOpen.value = true;
   detail.value = null;
   detailError.value = "";
   detailLoading.value = true;
   try {
-    detail.value = await loadById(l.id);
+    const entry = await loadById(l.id);
+    if (mine === detailRequest) detail.value = entry;
   } catch (err) {
-    detailError.value = err instanceof Error ? err.message : String(err);
+    if (mine === detailRequest) {
+      detailError.value = err instanceof Error ? err.message : String(err);
+    }
   } finally {
-    detailLoading.value = false;
+    if (mine === detailRequest) detailLoading.value = false;
   }
 }
 
 function closeDetail(): void {
+  detailRequest++;
   detailOpen.value = false;
   detail.value = null;
+  detailLoading.value = false;
 }
 
 function onDetailOpenChange(open: boolean): void {

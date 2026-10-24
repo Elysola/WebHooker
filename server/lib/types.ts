@@ -17,6 +17,14 @@ export interface Env {
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
   /**
+   * Feishu event "Encrypt Key": verifies `X-Lark-Signature` and decrypts
+   * encrypted callbacks. This or FEISHU_VERIFICATION_TOKEN is required for
+   * inbound Feishu commands and card buttons.
+   */
+  FEISHU_ENCRYPT_KEY?: string;
+  /** Feishu event "Verification Token", checked against every callback payload. */
+  FEISHU_VERIFICATION_TOKEN?: string;
+  /**
    * When enabled ("1"/"true"), GitHub users without any group access get a
    * personal group on first login instead of being blocked.
    */
@@ -43,6 +51,12 @@ export interface Config {
     token: string;
   };
   routes: Route[];
+  /**
+   * Groups with a stored route that could not be read. Their events are
+   * reported as transient failures instead of passing for delivered while a
+   * route that might have matched was silently left out.
+   */
+  unreadableGroups?: string[];
 }
 
 export interface RouteTarget {
@@ -91,11 +105,16 @@ export type GroupRole = "owner" | "admin" | "viewer";
 
 export interface GroupMember {
   /**
-   * GitHub login (case-insensitive). Ids are matched when stored, logins
-   * otherwise; identityMatches handles both.
+   * GitHub login (case-insensitive). An unbound all-digit entry (legacy
+   * `adminIds`) is read as a user id; see `memberMatches`.
    */
   login: string;
   role: GroupRole;
+  /**
+   * Immutable GitHub user id of the member, bound by the server (invite
+   * acceptance, the member's sign-in). Once bound, only that account matches.
+   */
+  userId?: string;
 }
 
 export interface Group {
@@ -130,6 +149,46 @@ export interface Group {
    * `owners` list. Empty/omitted = no installation restriction.
    */
   installationId?: number;
+  /**
+   * Isolated groups (self-service personal groups) only receive events from
+   * their own `/webhook/{groupId}` ingress; the global endpoint dispatches to
+   * them only once a super admin binds a source (`installationId` or
+   * `owners`). Only super admins may edit this field.
+   */
+  isolated?: boolean;
+  /**
+   * Immutable identity of this group, assigned by the server when the group is
+   * created and kept across renames. A group re-created under a former id gets
+   * a new one, so invites and delivery ledgers of the old group never apply to
+   * it. Clients cannot set it.
+   */
+  instance?: string;
+  /**
+   * Set when the group got its `instance` from the one-time backfill, i.e. it
+   * existed before instances: only such a group may adopt state stored under
+   * its id (a pre-instance webhook secret or invite). Server-owned.
+   */
+  instanceBackfilled?: boolean;
+  /**
+   * For a backfilled group: the id it had when it got its instance. State
+   * stored under a group id before instances (a webhook secret, an invite, a
+   * queued delivery) belongs to the group with that `legacyId` only — not to
+   * whichever group holds the id now (another one may have been renamed to
+   * it). Server-owned, kept across renames.
+   */
+  legacyId?: string;
+  /**
+   * The group's webhook secret (per-group ingress). Server-owned, stored with
+   * the group so it changes only through a compare-and-swap that re-checks the
+   * writer's role; never sent to clients. `null` in a mutation removes it.
+   */
+  webhookSecret?: string | null;
+  /**
+   * Opaque revision of the stored group, set on read by the admin API and
+   * echoed back on update so a stale edit is rejected instead of overwriting a
+   * newer one. Never persisted.
+   */
+  revision?: string;
   /**
    * Whether to include emoji in messages sent through this group's routes.
    * Defaults to true when omitted.
@@ -322,10 +381,27 @@ export interface NeutralMessage {
    */
   updateKey?: string;
   /**
+   * The chain key this message had before `updateKey` changed shape, used
+   * only to find a message tracked under the old key (then re-keyed).
+   */
+  legacyUpdateKey?: string;
+  /**
+   * Stable identity of this message for one target, the same in every
+   * attempt of a delivery (set by dispatch from delivery × route × target).
+   * Platforms with request idempotency (Discord `nonce`, Feishu `uuid`) use
+   * it, so a retry after a lost response never posts the message twice.
+   */
+  sendKey?: string;
+  /**
    * Discord role ids to mention in the message content (set by dispatch from
    * the route's `discordRoleIds`). Only used by the Discord driver.
    */
   mentionRoleIds?: string[];
+  /**
+   * False when the group turned emoji off: drivers must not add decorative
+   * emoji of their own (e.g. Telegram's author marker). Defaults to true.
+   */
+  emoji?: boolean;
 }
 
 export interface FormattedMessage {
@@ -353,4 +429,6 @@ export interface FormattedMessage {
       custom_id?: string;
     }>;
   }>;
+  /** Which mentions in `content` may notify; set so only the route's roles ping. */
+  allowed_mentions?: { parse: string[]; roles?: string[] };
 }

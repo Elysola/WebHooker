@@ -33,7 +33,7 @@ async function userOctokit(
   event: H3Event,
   userId: string,
 ): Promise<Awaited<ReturnType<typeof getUserOctokit>>> {
-  return getUserOctokit(userId, cfEnv(event).KV);
+  return getUserOctokit(userId, cfEnv(event));
 }
 
 function fail(event: H3Event, status: number, error: string): Record<string, unknown> {

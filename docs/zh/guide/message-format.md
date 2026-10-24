@@ -16,7 +16,7 @@
 
 只有仓库头会被加超链接——整条标题永远不会整体链接：
 
-- **Discord**（嵌入标题不支持局部链接）：标题为仓库头 `{repo}{#number}`，链接到仓库；`: {subject}` 文本作为描述首行渲染，不带链接。
+- **Discord**（嵌入标题不支持局部链接）：标题为仓库头 `{repo}{#number}`，链接到事件对象（issue、PR、评论或运行页面）；`: {subject}` 文本作为描述首行渲染，不带链接。
 - **Telegram**（HTML 支持行内链接）：单行标题保留描述文本，仅仓库头被包在链接中。
 
 标题中不含冒号分隔符（`:` 后跟一个空格）的消息保持旧的整行链接行为。
@@ -37,7 +37,7 @@
 
 ## 原地更新
 
-`workflow_run` 与 `check_run` 消息只发送一次，随运行进度原地编辑（queued → running → success/failure），不会重复发消息。追踪使用 KV `msg:*` 与每次运行的稳定 `updateKey`：`workflow_run` 以 workflow id 为键，`check_run` 则以 check 名 + commit SHA 为键（回退到 run id），因此每个阶段都换新 run id 的部署（例如 Cloudflare Pages）仍会编辑同一条消息。
+会随时间变化的对象只发送一条消息，之后原地编辑：`workflow_run` 与 `check_run` / `check_suite` 随运行进度（queued → running → success/failure），部署及其状态，以及 issue 评论、PR 审核与审核评论在编辑或删除时，都不会另发新消息。每次编辑都按最新事件重新渲染整条消息。追踪使用 D1 `message_tracking`（KV `msg:*` 为回退）与每个对象的稳定 `updateKey`：`workflow_run` 以 run id 为键，`check_suite` 以 suite id 为键，`check_run` 则以检查套件（或 App）+ check 名 + commit SHA 为键（回退到 run id），因此每个阶段都换新 run id 的部署（例如 Cloudflare Pages）仍会编辑同一条消息。消息链还按来源（provider + 仓库主机）和目标平台区分，两个拥有相同 `owner/repo` 的 Gitea 实例不会互相编辑对方的消息。比消息当前所示状态更旧的事件（迟到）不会覆盖它；编辑失败会记为失败而不是再发一条——只有旧消息已不存在时才发送新消息。
 
 ## Workflow 作业
 

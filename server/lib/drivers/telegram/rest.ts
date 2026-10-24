@@ -7,7 +7,20 @@ interface TelegramResponse {
   ok?: boolean;
   description?: string;
   result?: { message_id?: number };
+  parameters?: { retry_after?: number };
 }
+
+/**
+ * Longest rate-limit wait (seconds) slept inside one request; a longer one is
+ * returned as a 429 failure so the delivery queue retries it later instead.
+ */
+const MAX_INLINE_RETRY_AFTER = 10;
+
+/**
+ * Longest a single API call may take. Bounded, so a message edit always ends
+ * well within the update-chain lock it runs under (see `deliverUpdate`).
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
 
 async function post(
   token: string,
@@ -25,13 +38,25 @@ async function post(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       lastStatus = res.status;
       const data = (await res.json().catch(() => null)) as TelegramResponse | null;
 
       if (res.status === 429) {
-        const retryAfter = (data as { retry_after?: number })?.retry_after ?? 1;
+        // Telegram reports the wait in `parameters.retry_after` (seconds).
+        const raw = Number(data?.parameters?.retry_after);
+        const retryAfter = Number.isFinite(raw) && raw > 0 ? raw : 1;
         lastError = data?.description ?? `Rate limited (retry_after=${retryAfter})`;
+        if (retryAfter > MAX_INLINE_RETRY_AFTER || attempt === 2) {
+          return {
+            ok: false,
+            error: lastError,
+            errorCode: "RATE_LIMITED",
+            status: 429,
+            attempts: attempt + 1,
+          };
+        }
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
         continue;
       }
@@ -51,10 +76,25 @@ async function post(
         };
       }
 
+      // Accepted, but the answer is unreadable (cut off, timed out): the
+      // message may well exist, and Telegram has no idempotency key, so a
+      // retry could post it twice — a visible failure, not retried (and not
+      // a success without a message id, which an update chain would lose).
+      if (data?.ok !== true) {
+        log.error({ status: res.status, chatId }, "Unreadable Telegram response");
+        return {
+          ok: false,
+          error: "Telegram accepted the request, but its answer could not be read",
+          errorCode: "TELEGRAM_UNCERTAIN",
+          status: res.status,
+          attempts: attempt + 1,
+        };
+      }
+
       return {
         ok: true,
         status: res.status,
-        messageId: data?.result?.message_id != null ? String(data.result.message_id) : undefined,
+        messageId: data.result?.message_id != null ? String(data.result.message_id) : undefined,
         attempts: attempt + 1,
       };
     } catch (err) {

@@ -1,4 +1,10 @@
-import { getInstallationToken, GITHUB_API_VERSION, GITHUB_USER_AGENT } from "./app-token";
+import {
+  getInstallationToken,
+  githubApiUrl,
+  ENRICH_TIMEOUT_MS,
+  GITHUB_API_VERSION,
+  GITHUB_USER_AGENT,
+} from "./app-token";
 
 const CLOUDFLARE_SLUG = "cloudflare-workers-and-pages";
 
@@ -18,12 +24,16 @@ export async function getCheckSuiteBuildLogUrl(
   privateKey: string | undefined,
   installationId: number | undefined,
 ): Promise<string | undefined> {
-  if (!checkRunsUrl || !appId || !privateKey || !installationId) return undefined;
+  const url = githubApiUrl(checkRunsUrl);
+  if (!url || !appId || !privateKey || !installationId) return undefined;
   try {
     const token = await getInstallationToken(appId, privateKey, installationId);
     if (!token) return undefined;
 
-    const runsRes = await fetch(checkRunsUrl, {
+    // No redirects: a token must never follow a response to another host.
+    const runsRes = await fetch(url.toString(), {
+      redirect: "manual",
+      signal: AbortSignal.timeout(ENRICH_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github+json",

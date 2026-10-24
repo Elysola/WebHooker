@@ -96,6 +96,7 @@
             :groups-loading="groupsLoading"
             :logs-loading="overviewLogsLoading"
             :metrics-loading="overviewMetricsLoading"
+            :error="overviewError"
           />
 
           <template v-else-if="selectedGroup">
@@ -543,12 +544,22 @@ const { logs, loading: logsLoading, error: logsError, load: loadLogs } = useSend
 // Overview shows every group's latest sends and totals, apart from the Send
 // Logs and Stats pages and their group filters (the console stays mounted, so
 // shared state would carry one page's filter into the other).
-const { logs: overviewLogs, loading: overviewLogsLoading, load: loadOverviewLogs } = useSendLogs();
+const {
+  logs: overviewLogs,
+  loading: overviewLogsLoading,
+  error: overviewLogsError,
+  load: loadOverviewLogs,
+} = useSendLogs();
 const {
   metrics: overviewMetrics,
   loading: overviewMetricsLoading,
+  error: overviewMetricsError,
   load: loadOverviewMetrics,
 } = useMetrics();
+/** A failed overview load: shown, never passed off as "no data". */
+const overviewError = computed(
+  () => groupsError.value || overviewLogsError.value || overviewMetricsError.value,
+);
 const {
   entries: auditEntries,
   loading: auditLoading,
@@ -568,7 +579,9 @@ const {
   needLogin,
   error: groupsError,
   load: loadGroups,
-  save: saveGroups,
+  update: updateGroup,
+  create: createGroup,
+  remove: removeGroup,
   rename: groupsRename,
 } = useGroupsApi();
 const {
@@ -733,6 +746,7 @@ onMounted(() => {
     if (invite === "ok") push(t("members.inviteOk"));
     else if (invite != null && invite !== "ok") push(t("members.inviteBad"), "bad");
     if (params.get("install") === "ok") push(t("install.ok"));
+    if (params.get("error") === "install-forbidden") push(t("install.forbidden"), "bad");
   }
   loadGroups();
 });
@@ -868,7 +882,8 @@ watch(
 async function refreshOverview(): Promise<void> {
   refreshKey.value++;
   await Promise.all([loadGroups(), loadOverviewLogs(50), loadOverviewMetrics()]);
-  push(t("overview.refreshed"));
+  if (overviewError.value) push(t("overview.refreshFailed"), "bad");
+  else push(t("overview.refreshed"));
 }
 
 function enterGroup(group: Group): void {
@@ -966,6 +981,13 @@ async function onSave(route: Route): Promise<void> {
   try {
     let next: Route[];
     if (editing.value) {
+      // The route must still be the one the editor opened: a version changed
+      // by someone else meanwhile would otherwise be overwritten silently.
+      const latest = groupRoutes.value.find((r) => r.id === editing.value!.id);
+      if (!latest || JSON.stringify(latest) !== JSON.stringify(editing.value)) {
+        push(t("toast.routeChanged"), "bad");
+        return;
+      }
       next = groupRoutes.value.map((r) => (r.id === editing.value!.id ? route : r));
     } else {
       if (groupRoutes.value.some((r) => r.id === route.id)) {
@@ -1036,8 +1058,8 @@ function openEditGroup(group: Group): void {
 }
 
 /**
- * Group writes replace the whole group list, so they run one at a time, each
- * built from the list the previous one saved; true when one may start.
+ * Group writes run one at a time, each built on what the previous one saved;
+ * true when one may start.
  */
 function canWriteGroups(): boolean {
   if (!savingGroup.value) return true;
@@ -1049,8 +1071,7 @@ async function onSaveGroupFromPanel(group: Group): Promise<void> {
   if (!canWriteGroups()) return;
   savingGroup.value = true;
   try {
-    const next = groups.value.map((g) => (g.id === group.id ? group : g));
-    await saveGroups(next);
+    await updateGroup(group);
     push(t("toast.groupSaved"));
   } catch (err) {
     push(t("toast.saveFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");
@@ -1066,25 +1087,34 @@ async function onSaveGroup(group: Group): Promise<void> {
   savingGroup.value = true;
   try {
     const editing = editingGroup.value;
-    let next: Group[];
     if (editing) {
+      // The editor does not show these fields; keep what the group has.
+      const edited: Group = { ...group, isolated: editing.isolated, revision: editing.revision };
       if (group.id !== editing.id) {
-        // Id changed: rename first so routes/webhook secret/invites follow,
-        // then persist the remaining edits under the new id.
-        await groupsRename(editing.id, group.id);
-        // A list loaded meanwhile may already hold the new id as well.
-        next = [...groups.value.filter((g) => g.id !== editing.id && g.id !== group.id), group];
+        // Id changed: rename first so routes/webhook secret/invites follow
+        // (refused if the group changed since the editor opened), then
+        // persist the remaining edits under the new id, on top of exactly the
+        // renamed group. If that second step fails, the editor already points
+        // at the new id, so saving again only retries the update.
+        const renamed = await groupsRename(editing.id, group.id, editing.revision);
+        if (session === groupEditorSession) editingGroup.value = renamed;
+        // Server-decided fields (e.g. isolation made explicit by the rename)
+        // come from the renamed group, not from the editor's older copy.
+        await updateGroup({
+          ...edited,
+          isolated: renamed.isolated,
+          revision: renamed.revision,
+        });
       } else {
-        next = groups.value.map((g) => (g.id === editing.id ? group : g));
+        await updateGroup(edited);
       }
     } else {
       if (groups.value.some((g) => g.id === group.id)) {
         push(t("toast.groupIdExists"), "bad");
         return;
       }
-      next = [...groups.value, group];
+      await createGroup(group);
     }
-    await saveGroups(next);
     if (session === groupEditorSession) groupEditorOpen.value = false;
     push(t("toast.groupSaved"));
     await loadGroups();
@@ -1101,13 +1131,25 @@ async function onDeleteGroup(group: Group): Promise<void> {
   // Fetch the real route count for this group instead of relying on the
   // routes of whichever group happens to be open in the detail view.
   let used = 0;
+  let routesRevision: string | undefined;
+  let version: number | null = null;
   try {
-    const data = await apiFetch<{ routes?: Route[] }>(
+    const data = await apiFetch<{ routes?: Route[]; revision?: string; version?: number | null }>(
       `/admin/api/groups/${encodeURIComponent(group.id)}/routes`,
     );
     used = (data.routes ?? []).length;
-  } catch {
-    // Count is best-effort; proceed without the warning.
+    routesRevision = data.revision;
+    version = data.version ?? null;
+  } catch (err) {
+    // The deletion is confirmed on what the routes are now: without them,
+    // a route added meanwhile could be deleted unseen.
+    if (visit === pageVisit) {
+      push(
+        t("toast.deleteFailed", { msg: err instanceof Error ? err.message : String(err) }),
+        "bad",
+      );
+    }
+    return;
   }
   // The list was left while the count loaded: never ask on another page.
   if (visit !== pageVisit) return;
@@ -1118,7 +1160,8 @@ async function onDeleteGroup(group: Group): Promise<void> {
   if (!confirmed || visit !== pageVisit || !canWriteGroups()) return;
   savingGroup.value = true;
   try {
-    await saveGroups(groups.value.filter((g) => g.id !== group.id));
+    // Deletes the group as confirmed: a route added meanwhile makes it fail.
+    await removeGroup(group.id, group.revision, routesRevision, version);
     push(t("toast.groupDeleted"));
   } catch (err) {
     push(t("toast.deleteFailed", { msg: err instanceof Error ? err.message : String(err) }), "bad");

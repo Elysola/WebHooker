@@ -1,40 +1,93 @@
+import { RE2JS } from "re2js";
 import type { WebhookEvent, Filter, FilterNode, FilterOp } from "../types";
 
-const regexCache = new Map<string, RegExp>();
+/** A compiled user pattern; `test` searches (like `RegExp#test`). */
+interface Pattern {
+  test(text: string): boolean;
+}
+
+const patternCache = new Map<string, Pattern | null>();
 const keywordBodyCache = new WeakMap<WebhookEvent, string>();
 const MAX_PATTERN_LENGTH = 200;
+const MAX_CACHED_PATTERNS = 500;
 
 function isWrappedRegex(pattern: string): boolean {
   return pattern.length >= 2 && pattern.startsWith("/") && pattern.endsWith("/");
 }
 
-function compileRegex(pattern: string): RegExp | null {
-  if (pattern.length > MAX_PATTERN_LENGTH) return null;
-  const cached = regexCache.get(pattern);
-  if (cached) return cached;
+/**
+ * Compile with RE2 (re2js): matching runs in time linear in the input, so no
+ * pattern — however it nests or repeats — can stall a Worker on a crafted
+ * payload. RE2 has no backreferences or lookaround; such patterns are invalid.
+ */
+function compileRe2(source: string): Pattern {
+  const re = RE2JS.compile(source, RE2JS.CASE_INSENSITIVE);
+  return { test: (text: string): boolean => re.matcher(text).find() };
+}
+
+/**
+ * Why a user-supplied regex cannot be used, or null when it is fine. Patterns
+ * run on the linear-time RE2 engine, so only the length limit and the RE2
+ * syntax (no backreferences or lookaround) constrain them.
+ */
+export function regexSafetyIssue(source: string): string | null {
+  if (source.length > MAX_PATTERN_LENGTH) return "pattern is too long";
   try {
-    const re = new RegExp(pattern, "i");
-    regexCache.set(pattern, re);
-    return re;
-  } catch {
+    compileRe2(source);
     return null;
+  } catch {
+    return "invalid or unsupported regular expression (RE2 syntax: no backreferences or lookaround)";
   }
 }
 
-function compileGlob(pattern: string, anchored: boolean): RegExp | null {
-  if (pattern.length > MAX_PATTERN_LENGTH) return null;
-  const cacheKey = `${anchored ? "a" : "s"}:${pattern}`;
-  const cached = regexCache.get(cacheKey);
-  if (cached) return cached;
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  const body = escaped.replace(/\*/g, ".*").replace(/\?/g, ".");
-  try {
-    const re = new RegExp(anchored ? `^${body}$` : body, "i");
-    regexCache.set(cacheKey, re);
-    return re;
-  } catch {
-    return null;
+function cached(key: string, build: () => Pattern | null): Pattern | null {
+  if (patternCache.has(key)) {
+    // Most recently used last: the oldest unused pattern is evicted first.
+    const hit = patternCache.get(key) ?? null;
+    patternCache.delete(key);
+    patternCache.set(key, hit);
+    return hit;
   }
+  // Bounded: patterns come from every group's routes and test requests. One
+  // pattern makes room at a time — clearing everything would recompile every
+  // pattern in use once the limit is reached.
+  if (patternCache.size >= MAX_CACHED_PATTERNS) {
+    patternCache.delete(patternCache.keys().next().value!);
+  }
+  const re = build();
+  patternCache.set(key, re);
+  return re;
+}
+
+function compileRegex(pattern: string): Pattern | null {
+  // Regex and glob entries live under distinct prefixes: the regex `a:foo*`
+  // and the anchored glob `foo*` must never share a cache slot.
+  return cached(`r:${pattern}`, () => {
+    if (pattern.length > MAX_PATTERN_LENGTH) return null;
+    try {
+      return compileRe2(pattern);
+    } catch {
+      return null;
+    }
+  });
+}
+
+function compileGlob(pattern: string, anchored: boolean): Pattern | null {
+  if (pattern.length > MAX_PATTERN_LENGTH) return null;
+  // Repeated `*` match the same as one; an unanchored search needs no leading
+  // or trailing `*` at all.
+  let glob = pattern.replace(/\*+/g, "*");
+  if (!anchored) glob = glob.replace(/^\*+|\*+$/g, "");
+  return cached(`${anchored ? "a" : "s"}:${glob}`, () => {
+    const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    // One pass: a sequential replace would rewrite the `?` of `(?s:` again.
+    const body = escaped.replace(/[*?]/g, (c) => (c === "*" ? "(?s:.*)" : "(?s:.)"));
+    try {
+      return compileRe2(anchored ? `^${body}$` : body);
+    } catch {
+      return null;
+    }
+  });
 }
 
 function isGlob(pattern: string): boolean {
@@ -77,7 +130,7 @@ function extractBranch(event: WebhookEvent): string | undefined {
   const p = event.payload;
   switch (event.event) {
     case "push":
-      return typeof p.ref === "string" ? p.ref.replace("refs/heads/", "") : undefined;
+      return typeof p.ref === "string" ? p.ref.replace(/^refs\/heads\//, "") : undefined;
     case "pull_request":
     case "pull_request_review":
     case "pull_request_review_comment":
@@ -89,14 +142,22 @@ function extractBranch(event: WebhookEvent): string | undefined {
       return (p.workflow_run as { head_branch?: string } | undefined)?.head_branch;
     case "check_suite":
       return (p.check_suite as { head_branch?: string } | undefined)?.head_branch;
+    case "check_run":
+      return (p.check_run as { check_suite?: { head_branch?: string } } | undefined)?.check_suite
+        ?.head_branch;
     case "workflow_job":
       return (p.workflow_job as { head_branch?: string } | undefined)?.head_branch;
     case "deployment":
-      return typeof p.ref === "string" ? p.ref.replace("refs/heads/", "") : undefined;
+    case "deployment_status": {
+      // The deployed ref lives on the deployment object (a top-level `ref` is
+      // only read as a fallback).
+      const ref = (p.deployment as { ref?: unknown } | undefined)?.ref ?? p.ref;
+      return typeof ref === "string" ? ref.replace(/^refs\/heads\//, "") : undefined;
+    }
     case "commit_comment":
       return undefined;
     case "code_scanning_alert":
-      return typeof p.ref === "string" ? p.ref : undefined;
+      return typeof p.ref === "string" ? p.ref.replace(/^refs\/heads\//, "") : undefined;
     default:
       return undefined;
   }
@@ -111,7 +172,8 @@ function stringify(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === undefined || value === null) return "";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
+  // Payload values are JSON; anything else (should it appear) compares as "".
+  return JSON.stringify(value) ?? "";
 }
 
 function toNumber(value: unknown): number | null {
@@ -142,8 +204,11 @@ function walkPath(node: unknown, parts: string[], index: number, out: unknown[])
     return;
   }
   if (node === null || node === undefined || typeof node !== "object") return;
-  const next = (node as Record<string, unknown>)[parts[index]!];
-  walkPath(next, parts, index + 1, out);
+  // Own properties only: `constructor`, `__proto__`, `toString`... are not
+  // payload data and must never reach the comparison.
+  const key = parts[index]!;
+  if (!Object.prototype.hasOwnProperty.call(node, key)) return;
+  walkPath((node as Record<string, unknown>)[key], parts, index + 1, out);
 }
 
 function valueList(filter: Filter, event: WebhookEvent): unknown[] {
@@ -218,6 +283,48 @@ function matchFilter(filter: Filter, event: WebhookEvent, keywordBody?: string):
   const patterns = toPatterns(filter);
   const matches = valueList(filter, event).some((v) => valueMatches(v, op, patterns));
   return filter.exclude ? !matches : matches;
+}
+
+/**
+ * Whether a filter tree has the shape the evaluator assumes: every node is a
+ * leaf (`type`, no `all`/`any`/`not`) or exactly one combinator holding nodes
+ * of the same shape. A node mixing kinds (`{"all": 0, "any": [...]}`) passes
+ * a lenient schema but makes the evaluator throw.
+ */
+export function filterNodeWellFormed(node: unknown): boolean {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return false;
+  const n = node as Record<string, unknown>;
+  const kinds = (["all", "any", "not"] as const).filter((k) => k in n);
+  if (kinds.length > 1) return false;
+  const kind = kinds[0];
+  if (kind === "all" || kind === "any") {
+    const list = n[kind];
+    return Array.isArray(list) && list.every(filterNodeWellFormed);
+  }
+  if (kind === "not") return filterNodeWellFormed(n.not);
+  return typeof n.type === "string";
+}
+
+/**
+ * Whether every pattern in a filter tree can actually run the way the matcher
+ * reads it — a regex compiles on the engine in use, a glob compiles within
+ * the length limit. One that cannot (written for another engine, e.g. with
+ * lookahead, or too long) would quietly never match — and flip an `exclude`
+ * into a pass. Literal comparisons (`contains`, `startsWith`, ...) are not
+ * patterns and always run.
+ */
+export function filterPatternsUsable(node: FilterNode): boolean {
+  if ("all" in node) return node.all.every(filterPatternsUsable);
+  if ("any" in node) return node.any.every(filterPatternsUsable);
+  if ("not" in node) return filterPatternsUsable(node.not);
+  const op = node.type === "keyword" ? "keyword" : (node.op ?? "eq");
+  return toPatterns(node).every((p) => {
+    if (op === "regex") return compileRegex(p) !== null;
+    if (op !== "eq" && op !== "in" && op !== "ne" && op !== "keyword") return true;
+    if (isWrappedRegex(p)) return compileRegex(p.slice(1, -1)) !== null;
+    if (isGlob(p)) return compileGlob(p, op !== "keyword") !== null;
+    return true;
+  });
 }
 
 export function containsKeyword(node: FilterNode): boolean {

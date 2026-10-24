@@ -1,6 +1,6 @@
 import type { RouteTarget, Env, NeutralMessage } from "../../types";
 import type { PlatformDriver, SendResult } from "../types";
-import { getTenantAccessToken, sendMessage, updateMessage } from "./rest";
+import { forgetRejectedToken, getTenantAccessToken, sendMessage, updateMessage } from "./rest";
 import { renderNeutralMessage } from "./render";
 
 export class FeishuDriver implements PlatformDriver {
@@ -17,9 +17,14 @@ export class FeishuDriver implements PlatformDriver {
         ok: false,
         error: tokenRes.error ?? "No token",
         errorCode: tokenRes.errorCode ?? "NO_TOKEN",
+        status: tokenRes.status,
       };
     }
-    return sendMessage(tokenRes.token, chatId, renderNeutralMessage(message));
+    return forgetRejectedToken(
+      await sendMessage(tokenRes.token, chatId, renderNeutralMessage(message), message.sendKey),
+      env,
+      tokenRes.token,
+    );
   }
 
   async edit(
@@ -38,8 +43,13 @@ export class FeishuDriver implements PlatformDriver {
         ok: false,
         error: tokenRes.error ?? "No token",
         errorCode: tokenRes.errorCode ?? "NO_TOKEN",
+        status: tokenRes.status,
       };
     }
-    return updateMessage(tokenRes.token, messageId, renderNeutralMessage(message));
+    return forgetRejectedToken(
+      await updateMessage(tokenRes.token, messageId, renderNeutralMessage(message)),
+      env,
+      tokenRes.token,
+    );
   }
 }

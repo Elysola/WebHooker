@@ -25,22 +25,24 @@ app/                     # Vue 3 UI (Nuxt app dir)
 server/                  # Nitro server (H3 handlers in server/routes/)
 ├── routes/              # /health, /webhook[/:groupId], /discord/interactions, /telegram/webhook,
 │                        # /auth/github*, /admin/{login,logout,invite,api/**}, /api/{comment,merge,close,react,richheader}
-├── tasks/               # Scheduled (cron */5): discord-sync, telegram-sync, audit-prune
+├── tasks/               # Scheduled (cron */5): discord-sync, telegram-sync, audit-prune, storage-prune
 ├── error-handler.ts     # JSON error handler
 └── lib/
     ├── types.ts         # Env, Config, Route, Filter, Group, WebhookEvent, NeutralMessage
-    ├── config.ts        # Loads routes from KV (returns [] if unset), builds Config from env
+    ├── config.ts        # Binds the D1 config store, loads routes/groups (fresh or cached), builds Config from env
     ├── core/
     │   └── dispatch.ts  # Platform-neutral dispatch: match routes → formatEvent → getDriver().send/edit
     ├── events/          # Provider-agnostic route matching
-    │   └── match.ts     # matchRoute, eventOwners, extractBranch, keyword filtering
+    │   ├── match.ts     # matchRoute, eventOwners
+    │   └── filter-ast.ts # filter evaluation (flat filters + all/any/not AST), extractBranch, keyword search, RE2 patterns
     ├── providers/       # Forge webhook providers (verify + parse/normalize)
     │   ├── types.ts     # Provider interface (matches/verify/parse)
     │   ├── index.ts     # detectProvider() registry (github, gitea, custom)
     │   ├── github/      # X-GitHub-Event + X-Hub-Signature-256
     │   └── gitea/       # X-Gitea-Event + X-Gitea-Signature (normalized payloads)
     ├── formatters/      # Platform-neutral formatters (produce NeutralMessage)
-    │   ├── index.ts     # formatEvent: 28-event switch + custom → NeutralMessage + re-exports
+    │   ├── index.ts     # formatEvent: builds the context, finds the formatter in the registry → NeutralMessage
+    │   ├── registry.ts  # eventFormatters[]: event names → formatter
     │   ├── colors.ts    # GITHUB_COLORS + WORKFLOW_CONCLUSION_EMOJI
     │   ├── helpers.ts   # emojiPrefix, T, buildMessage, commitLink/branchLink/tagLink
     │   └── *.ts         # push, pull-request, issues, comments, workflow, release, create, repo,
@@ -129,8 +131,8 @@ platform limits.
 1. Add the event type to `GITHUB_COLORS` in `server/lib/formatters/colors.ts` (if new color needed)
 2. Add action labels to the locale dictionaries in `server/lib/lib/locales/en.ts` and `server/lib/lib/locales/zh.ts` (if new actions)
 3. Create a `formatEventType` function in `server/lib/formatters/`
-4. Add the case to the `formatEvent` switch statement in `server/lib/formatters/index.ts`
-5. Update `extractBranch` in `server/lib/events/match.ts` if the event has branch info
+4. Register it in `eventFormatters` in `server/lib/formatters/registry.ts` (`{ events: ["your_event"], format: (c) => … }`)
+5. Update `extractBranch` in `server/lib/events/filter-ast.ts` if the event has branch info
 6. Add the event to the documentation in `docs/events/supported.md` and `docs/zh/events/supported.md`
 7. Add the event to the README (`README.md` and `README.zh.md`) event tables and the GitHub App event subscription list
 8. Subscribe to the event in your GitHub App settings

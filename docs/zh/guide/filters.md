@@ -124,16 +124,17 @@
 
 匹配事件涉及的分支。何种字段算作「分支」取决于事件类型：
 
-| 事件                        | 提取的分支                          |
-| --------------------------- | ----------------------------------- |
-| `push`                      | 推送到的目标分支                    |
-| `pull_request`（及 review） | 拉取请求的 **head**（源）分支       |
-| `create` / `delete`         | 创建/删除的分支或标签               |
-| `workflow_run`              | 工作流运行所在的 `head_branch`      |
-| `workflow_job`              | 作业运行所在的 `head_branch`        |
-| `check_suite`               | 检查套件的 `head_branch`            |
-| `deployment`                | 部署引用（去除 `refs/heads/` 前缀） |
-| `code_scanning_alert`       | 告警所属的分支                      |
+| 事件                               | 提取的分支                                                                  |
+| ---------------------------------- | --------------------------------------------------------------------------- |
+| `push`                             | 推送到的目标分支                                                            |
+| `pull_request`（及 review）        | 拉取请求的 **head**（源）分支                                               |
+| `create` / `delete`                | 创建/删除的分支或标签                                                       |
+| `workflow_run`                     | 工作流运行所在的 `head_branch`                                              |
+| `workflow_job`                     | 作业运行所在的 `head_branch`                                                |
+| `check_run`                        | 所属检查套件的 `head_branch`                                                |
+| `check_suite`                      | 检查套件的 `head_branch`                                                    |
+| `deployment` / `deployment_status` | 部署引用（`deployment.ref`，去除开头的 `refs/heads/`）                      |
+| `code_scanning_alert`              | 告警的 ref，去除开头的 `refs/heads/`（写 `main`，不要写 `refs/heads/main`） |
 
 ```json
 {
@@ -179,8 +180,9 @@
 
 行为细节：
 
-- 超过 200 个字符的模式**不**编译为通配符/正则，回退为纯文本匹配。
-- 被 `/` 包裹但**不是合法正则**的模式匹配**任何内容都不命中**（过滤器恒为 false），而不会报错。
+- 超过 200 个字符的模式无法编译为通配符/正则，保存时会被拒绝。
+- 通配符与正则表达式运行在 RE2 引擎上，匹配时间与输入长度成线性关系——任何模式都无法拖住 worker。RE2 语法不支持反向引用（`\1`）与环视（`(?=…)`、`(?<!…)`）；控制台与 API 会拒绝此类模式。
+- 被 `/` 包裹但**不是合法正则**的模式在保存时会被拒绝。
 - 要搜索是通配符或正则特殊字符的文本（如 `v1.2.3`），使用纯文本形式即可——不含 `*`、`?` 且未被 `//` 包裹的模式按字面匹配。
 - 搜索覆盖**整个**载荷：提交信息、PR 标题与正文、标签、引用，甚至仓库名和发送者名。
 
@@ -221,7 +223,7 @@
 | `gt` / `gte` | 数值大于 / 大于等于                      |
 | `lt` / `lte` | 数值小于 / 小于等于                      |
 | `in`         | 值等于任一列出的模式                     |
-| `exists`     | 字段存在（非 null）；忽略 `match`        |
+| `exists`     | 字段存在（非 null）；`match` 可省略      |
 
 ```json
 { "type": "field", "path": "pull_request.commits", "op": "gt", "match": "1" }
@@ -239,6 +241,9 @@
 {
   "id": "grouped",
   "name": "Grouped",
+  "enabled": true,
+  "groupId": "eng",
+  "filters": [],
   "ast": {
     "all": [
       { "type": "event", "match": "pull_request" },
@@ -250,11 +255,11 @@
       }
     ]
   },
-  "targets": [{ "channelId": "..." }]
+  "targets": [{ "platform": "discord", "channelId": "..." }]
 }
 ```
 
-当 `ast` 存在时，它优先于 `filters`。管理后台的路由编辑器会以可视化方式构建 `ast`（all/any/not 分组）、实时展示树状解释，并可通过「测试匹配」面板粘贴 JSON 载荷进行试匹配。
+当 `ast` 存在时，它优先于 `filters`；路由仍需带一个 `filters` 数组（可以为空）。管理后台的路由编辑器会以可视化方式构建 `ast`（all/any/not 分组）、实时展示树状解释，并可通过「测试匹配」面板粘贴 JSON 载荷进行试匹配。
 
 匹配值、字段路径与测试事件均为可搜索的下拉框。候选项来自 GitHub 与 Gitea 的 webhook 定义——事件、路由所选事件的动作、常用载荷路径及其已知取值——以英文 key 展示，并附当前界面语言的说明；搜索优先匹配 key，其次匹配英文或中文说明。列表之外的值仍可直接输入，添加前会按匹配规则校验，只拒绝永远不可能匹配的值（含空格的事件名、含 git 禁用字符的分支、无效的正则、比较运算中的非数字等）；仓库与操作者不做格式限制，因为自定义 webhook 可以携带任意字符串。已输入但未按<kbd>回车</kbd>添加的内容会阻止保存路由、存为片段和测试匹配，而不会被静默添加或丢弃。可一次输入或粘贴多个值，以逗号或换行分隔；`/正则/` 内的逗号会保留，选择「正则匹配」运算符时只按换行分隔（如 `^v{1,3}` 这样的原始模式可以包含逗号）。候选值会随运算符调整：「包含 / 开头是 / 结尾是」按字面比较，因此通配候选会换成其对应的文本（「开头是」用 `release/` 代替 `release/*`，「结尾是」用 `[bot]` 代替 `*[bot]`）；「正则匹配」会把候选换成已转义并加锚点的等价正则（如 `^dependabot\[bot\]$`、`^release/`）；比较运算符不提供候选。在「等于 / 不等于 / 属于」与「正则匹配」之间切换时，已添加的值会做 `/x/` ↔ `x` 改写——两种写法编译成同一个正则，匹配结果完全不变。其他值保持原样（字面、通配与按字面比较在换行和 Unicode 大小写折叠上与正则并不等价），在新运算符下永远无法匹配的值会被标出。`field` 路径中途的数组会被展开，但以数组**结尾**的路径（如 `commits.modified`）会作为整体比较——要匹配其中某个元素请用「包含」；在编辑器中选择这类候选路径时会自动切换为「包含」。
 
@@ -275,13 +280,13 @@
   "filters": [
     { "type": "event", "match": "pull_request" },
     { "type": "actor", "match": "dependabot[bot]", "exclude": true },
-    { "type": "keyword", "match": "\"draft\": true", "exclude": true }
+    { "type": "field", "path": "pull_request.draft", "match": "true", "exclude": true }
   ],
-  "target": { "channelId": "111111111111111111" }
+  "targets": [{ "platform": "discord", "channelId": "111111111111111111" }]
 }
 ```
 
-`"draft": true` 模式匹配 GitHub 在拉取请求载荷中包含的 `draft` 字段；配合 `exclude: true` 即可过滤掉草稿 PR。
+`field` 过滤器读取载荷中的 `pull_request.draft`；配合 `exclude: true` 即可过滤掉草稿 PR。
 
 ## 示例 2：仅发布通知频道
 
@@ -298,7 +303,7 @@
     { "type": "action", "match": "published" },
     { "type": "repo", "match": "myorg/backend" }
   ],
-  "target": { "channelId": "222222222222222222" }
+  "targets": [{ "platform": "discord", "channelId": "222222222222222222" }]
 }
 ```
 
@@ -317,14 +322,14 @@
     { "type": "action", "match": "completed" },
     { "type": "keyword", "match": "\"conclusion\":\"failure\"" }
   ],
-  "target": { "channelId": "333333333333333333" }
+  "targets": [{ "platform": "discord", "channelId": "333333333333333333" }]
 }
 ```
 
 ## 常见陷阱
 
 - **通配符是 glob，不是正则。** `repo: "myorg/*"` 匹配 `myorg` 下的任意仓库（含 `myorg/sub/backend`），但 `repo: "myorg/.*"` 按字面匹配。需要正则请用 `/` 包裹：`"/myorg\/.*/"`。
-- **被 `/` 包裹的非法正则永远不匹配。** 与纯文本不同——未包裹的非法模式按字面匹配。只有确定是真正的正则时才使用 `//` 包裹。
+- **被 `/` 包裹的非法正则会被拒绝。** 控制台与 API 在保存时拒绝它；此前已保存的路由会被报告为[不可读](./routes#不可读的路由)，所在分组的投递会一直重试直到修复。与 `//` 包裹的文本不同——未包裹的模式按字面匹配。只有确定是真正的正则时才使用 `//` 包裹。
 - **`action` 过滤器遇到无 action 的事件永远不匹配。** 先确认该事件带有 `action` 字段（见[过滤器兼容性](../events/supported#过滤器兼容性)）。
 - **`branch` 过滤器遇到无分支的事件永远不匹配。** 在 `issues` 事件上使用 `branch` 过滤器恒为假。此时需要类似分支的匹配可用 `keyword`。
 - **`keyword` 会搜索一切。** 因为它扫描整个载荷，`"fix"` 这样的模式可能同时匹配提交信息、issue 标题和仓库名。请尽量写得更具体。

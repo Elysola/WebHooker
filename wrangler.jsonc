@@ -51,7 +51,9 @@
 		"consumers": [
 			{
 				"queue": "webhooker-delivery",
-				"max_batch_size": 10,
+				// Small batches: one invocation may make 50 D1 queries and 50
+				// subrequests on Workers Free, and a delivery takes ~7 + its sends.
+				"max_batch_size": 3,
 				"max_batch_timeout": 30,
 				"max_retries": 5,
 				"dead_letter_queue": "webhooker-delivery-dlq"

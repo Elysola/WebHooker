@@ -7,6 +7,18 @@ interface DiscordMessage {
   id?: string;
 }
 
+/**
+ * Longest rate-limit wait (seconds) slept inside one request; a longer one is
+ * returned as a 429 failure so the delivery queue retries it later instead.
+ */
+const MAX_INLINE_RETRY_AFTER = 10;
+
+/**
+ * Longest a single API call may take. Bounded, so a message edit always ends
+ * well within the update-chain lock it runs under (see `deliverUpdate`).
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request(
   url: string,
   method: string,
@@ -23,13 +35,24 @@ async function request(
           "Content-Type": "application/json",
         },
         body: JSON.stringify(message),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (res.status === 429) {
-        const rateLimit = (await res.json()) as { retry_after?: number };
-        const retryAfter = (rateLimit.retry_after ?? 1) * 1000;
+        const rateLimit = (await res.json().catch(() => ({}))) as { retry_after?: number };
+        const seconds = Number(rateLimit.retry_after);
+        const retryAfter = Number.isFinite(seconds) && seconds > 0 ? seconds : 1;
         log.warn({ retryAfter, attempt }, "Rate limited");
-        await new Promise((r) => setTimeout(r, retryAfter));
+        if (retryAfter > MAX_INLINE_RETRY_AFTER || attempt === 2) {
+          return {
+            ok: false,
+            error: `Rate limited (retry_after=${retryAfter})`,
+            errorCode: "RATE_LIMITED",
+            status: 429,
+            attempts: attempt + 1,
+          };
+        }
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
         continue;
       }
 
@@ -58,15 +81,11 @@ async function request(
         };
       }
 
-      let messageId: string | undefined;
-      try {
-        const data = (await res.json()) as DiscordMessage;
-        messageId = data.id;
-      } catch {
-        // ignore malformed success body
-      }
-
-      return { ok: true, status: res.status, messageId, attempts: attempt + 1 };
+      // A success whose body cannot be read (cut off, timed out) is not known
+      // to have happened: tried again — a create carries its nonce, so it is
+      // never doubled.
+      const data = (await res.json()) as DiscordMessage | null;
+      return { ok: true, status: res.status, messageId: data?.id, attempts: attempt + 1 };
     } catch (err) {
       log.error({ err, attempt, channelId }, "Failed to send message");
       if (attempt === 2)
@@ -83,11 +102,19 @@ export async function sendMessage(
   channelId: string,
   message: unknown,
   threadId?: string,
+  sendKey?: string,
 ): Promise<SendResult> {
-  const url = threadId
-    ? `${DISCORD_API}/channels/${threadId}/messages`
-    : `${DISCORD_API}/channels/${channelId}/messages`;
-  return request(url, "POST", token, message, channelId);
+  // Ids are path segments: encoded, so no stored value can address another
+  // resource (`x/../123` is never the channel `123`).
+  const url = `${DISCORD_API}/channels/${encodeURIComponent(threadId || channelId)}/messages`;
+  // One nonce for every attempt of this send — and, given a `sendKey`, for
+  // every attempt of the delivery: when a create went through but its
+  // response was lost, Discord answers the retry with that same message
+  // instead of posting a second one (`enforce_nonce`, a few minutes' window).
+  const nonce = (sendKey ?? crypto.randomUUID().replace(/-/g, "")).slice(0, 25);
+  const body =
+    message && typeof message === "object" ? { ...message, nonce, enforce_nonce: true } : message;
+  return request(url, "POST", token, body, channelId);
 }
 
 export async function editMessage(
@@ -97,7 +124,7 @@ export async function editMessage(
   message: unknown,
   threadId?: string,
 ): Promise<SendResult> {
-  const base = threadId ?? channelId;
-  const url = `${DISCORD_API}/channels/${base}/messages/${messageId}`;
+  const base = encodeURIComponent(threadId || channelId);
+  const url = `${DISCORD_API}/channels/${base}/messages/${encodeURIComponent(messageId)}`;
   return request(url, "PATCH", token, message, channelId);
 }

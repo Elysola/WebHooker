@@ -20,7 +20,7 @@ const emit = defineEmits<{
 const sortBy = ref<"total" | "failed" | "rate">("total");
 
 const groupOptions = computed(() => [
-  { label: t("metrics.allGroups"), value: "all" },
+  { label: t("metrics.allGroups"), value: "*" }, // "*" is no group id: one named "all" stays selectable
   ...props.groups.map((g) => ({ label: g.name || g.id, value: g.id })),
 ]);
 
@@ -34,7 +34,7 @@ function pctOf(count: number, total: number): string {
 }
 
 function onGroupFilter(value: string): void {
-  emit("update:selectedGroupId", value === "all" ? "" : value);
+  emit("update:selectedGroupId", value === "*" ? "" : value);
   emit("filter");
 }
 
@@ -120,7 +120,7 @@ function cycleSort(): void {
         <label class="filter-label">{{ t("metrics.filterGroup") }}</label>
         <RcSelect
           class="filter-select"
-          :model-value="selectedGroupId || 'all'"
+          :model-value="selectedGroupId || '*'"
           :options="groupOptions"
           :disabled="loading"
           @update:model-value="onGroupFilter"

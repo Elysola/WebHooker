@@ -77,6 +77,8 @@ const eventSuggestions = computed(() => eventOptions(locale.value));
 
 const {
   fragments,
+  loading: fragmentsLoading,
+  error: fragmentsLoadError,
   readyFor: fragmentsReadyFor,
   load: loadFragments,
   save: saveFragments,
@@ -459,250 +461,272 @@ watch(
     </template>
 
     <form ref="bodyEl" class="editor-body" @submit.prevent="save">
-      <section class="editor-section">
-        <h3 class="editor-section-title">{{ t("routeEditor.sectionBasic") }}</h3>
-        <div v-if="!isEdit" class="templates">
-          <RcButton
-            v-for="tmpl in ROUTE_TEMPLATES"
-            :key="tmpl.id"
-            type="button"
-            variant="ghost"
-            size="sm"
-            :class="form.id === tmpl.id ? 'template-chip active' : 'template-chip'"
-            @click="applyTemplate(tmpl)"
-          >
-            {{ t(tmpl.nameKey) }}
-          </RcButton>
-        </div>
-        <div class="row2">
-          <div class="field">
-            <label>{{ t("routeEditor.name") }}</label>
-            <RcInput v-model="form.name" :placeholder="t('routeEditor.namePlaceholder')" required />
-          </div>
-          <div class="field">
-            <label>{{ t("routeEditor.id") }}</label>
-            <RcInput v-model="form.id" placeholder="my-route" required />
-            <div class="hint">{{ t("routeEditor.idHint") }}</div>
-          </div>
-        </div>
-      </section>
-
-      <section class="editor-section">
-        <h3 class="editor-section-title">{{ t("routeEditor.sectionOptions") }}</h3>
-        <div class="option-list">
-          <div class="option-row">
-            <RcSwitch v-model="form.enabled" :label="t('routeEditor.enabled')" />
-          </div>
-          <div class="option-row">
-            <RcCheckbox v-model="form.fallback" :label="t('routeEditor.fallback')" />
-            <p class="option-hint">{{ t("routeEditor.fallbackHint") }}</p>
-          </div>
-          <div class="option-row">
-            <RcCheckbox v-model="form.stop" :label="t('routeEditor.stop')" />
-            <p class="option-hint">{{ t("routeEditor.stopHint") }}</p>
-          </div>
-        </div>
-        <div class="field">
-          <label>{{ t("routeEditor.discordRoles") }}</label>
-          <RcTagInput
-            v-model="discordRoles"
-            separator=","
-            :placeholder="t('routeEditor.discordRolesPlaceholder')"
-          />
-          <div class="hint">{{ t("routeEditor.discordRolesHint") }}</div>
-        </div>
-      </section>
-
-      <section class="editor-section">
-        <h3 class="editor-section-title">{{ t("routeEditor.sectionFilters") }}</h3>
-        <FilterNodeEditor :node="root" />
-        <div v-if="filterError" class="err" data-save-error>{{ filterError }}</div>
-      </section>
-
-      <section class="editor-section">
-        <h3 class="editor-section-title">{{ t("routeEditor.testMatch") }}</h3>
-        <div class="field test-event">
-          <FilterCombobox
-            ref="testEventInput"
-            :model-value="testEvent"
-            :options="eventSuggestions"
-            creatable
-            :validate="validateEventName"
-            :placeholder="t('routeEditor.testEvent')"
-            :label="t('routeEditor.testEvent')"
-            @update:model-value="testEvent = typeof $event === 'string' ? $event : ''"
-          />
-        </div>
-        <div class="field">
-          <RcTextarea
-            v-model="testPayload"
-            class="test-payload"
-            :rows="6"
-            :placeholder="t('routeEditor.testPayloadPlaceholder')"
-          />
-        </div>
-        <div class="field">
-          <RcButton type="button" variant="ghost" :loading="testing" @click="runTest">
-            {{ testing ? "…" : t("routeEditor.testRun") }}
-          </RcButton>
-        </div>
-        <div v-if="testResult" class="test-result" :class="{ ok: testResult.matched }">
-          <span class="test-badge">
-            {{
-              testResult.matched ? t("routeEditor.testMatched") : t("routeEditor.testNotMatched")
-            }}
-          </span>
-          <span class="test-explanation">{{ testResult.explanation }}</span>
-        </div>
-        <div v-if="testError" class="err">{{ testError }}</div>
-      </section>
-
-      <section v-if="groupId" class="editor-section">
-        <h3 class="editor-section-title">{{ t("routeEditor.fragments") }}</h3>
-        <div class="fragments-presets">
-          <span class="hint">{{ t("routeEditor.fragmentsPresets") }}</span>
-          <div v-for="preset in FRAGMENT_PRESETS" :key="preset.id" class="fragment-row">
-            <span class="fragment-name">{{ t(preset.nameKey) }}</span>
+      <!-- Locked while saving: an edit made meanwhile would be lost when the
+           save closes the editor. -->
+      <fieldset :disabled="saving" class="contents">
+        <section class="editor-section">
+          <h3 class="editor-section-title">{{ t("routeEditor.sectionBasic") }}</h3>
+          <div v-if="!isEdit" class="templates">
             <RcButton
+              v-for="tmpl in ROUTE_TEMPLATES"
+              :key="tmpl.id"
               type="button"
               variant="ghost"
               size="sm"
-              class="fragment-action"
-              @click="insertNode(preset.node)"
+              :class="form.id === tmpl.id ? 'template-chip active' : 'template-chip'"
+              @click="applyTemplate(tmpl)"
             >
-              {{ t("routeEditor.fragmentsInsert") }}
+              {{ t(tmpl.nameKey) }}
             </RcButton>
           </div>
-        </div>
-        <div class="fragments-list">
-          <div v-if="!fragments.length" class="hint">{{ t("routeEditor.fragmentsEmpty") }}</div>
-          <div v-for="frag in fragments" :key="frag.id" class="fragment-row">
-            <span class="fragment-name">{{ frag.name }}</span>
-            <RcButton
-              type="button"
-              variant="ghost"
-              size="sm"
-              class="fragment-action"
-              @click="insertFragment(frag)"
-            >
-              {{ t("routeEditor.fragmentsInsert") }}
-            </RcButton>
-            <RcButton
-              type="button"
-              variant="ghost"
-              color="error"
-              size="icon"
-              class="h-8 w-8 text-muted hover:text-bad"
-              :disabled="!fragmentsWritable"
-              :title="t('routeEditor.fragmentsDelete')"
-              :aria-label="t('routeEditor.fragmentsDelete')"
-              @click="deleteFragment(frag)"
-            >
-              <Trash2 :size="15" />
-            </RcButton>
+          <div class="row2">
+            <div class="field">
+              <label>{{ t("routeEditor.name") }}</label>
+              <RcInput
+                v-model="form.name"
+                :placeholder="t('routeEditor.namePlaceholder')"
+                required
+              />
+            </div>
+            <div class="field">
+              <label>{{ t("routeEditor.id") }}</label>
+              <RcInput v-model="form.id" placeholder="my-route" required />
+              <div class="hint">{{ t("routeEditor.idHint") }}</div>
+            </div>
           </div>
-        </div>
-        <div class="fragment-save">
-          <div class="fragment-save-input">
-            <RcInput
-              v-model="fragmentName"
-              :placeholder="t('routeEditor.fragmentsNamePlaceholder')"
+        </section>
+
+        <section class="editor-section">
+          <h3 class="editor-section-title">{{ t("routeEditor.sectionOptions") }}</h3>
+          <div class="option-list">
+            <div class="option-row">
+              <RcSwitch v-model="form.enabled" :label="t('routeEditor.enabled')" />
+            </div>
+            <div class="option-row">
+              <RcCheckbox v-model="form.fallback" :label="t('routeEditor.fallback')" />
+              <p class="option-hint">{{ t("routeEditor.fallbackHint") }}</p>
+            </div>
+            <div class="option-row">
+              <RcCheckbox v-model="form.stop" :label="t('routeEditor.stop')" />
+              <p class="option-hint">{{ t("routeEditor.stopHint") }}</p>
+            </div>
+          </div>
+          <div class="field">
+            <label>{{ t("routeEditor.discordRoles") }}</label>
+            <RcTagInput
+              v-model="discordRoles"
+              separator=","
+              :placeholder="t('routeEditor.discordRolesPlaceholder')"
+            />
+            <div class="hint">{{ t("routeEditor.discordRolesHint") }}</div>
+          </div>
+        </section>
+
+        <section class="editor-section">
+          <h3 class="editor-section-title">{{ t("routeEditor.sectionFilters") }}</h3>
+          <FilterNodeEditor :node="root" />
+          <div v-if="filterError" class="err" data-save-error>{{ filterError }}</div>
+        </section>
+
+        <section class="editor-section">
+          <h3 class="editor-section-title">{{ t("routeEditor.testMatch") }}</h3>
+          <div class="field test-event">
+            <FilterCombobox
+              ref="testEventInput"
+              :model-value="testEvent"
+              :options="eventSuggestions"
+              creatable
+              :validate="validateEventName"
+              :placeholder="t('routeEditor.testEvent')"
+              :label="t('routeEditor.testEvent')"
+              @update:model-value="testEvent = typeof $event === 'string' ? $event : ''"
             />
           </div>
-          <RcButton
-            type="button"
-            variant="ghost"
-            class="shrink-0 whitespace-nowrap"
-            :disabled="!fragmentsWritable"
-            @click="saveAsFragment"
-          >
-            {{ t("routeEditor.fragmentsSave") }}
-          </RcButton>
-        </div>
-        <div v-if="fragmentError" class="err">{{ fragmentError }}</div>
-      </section>
+          <div class="field">
+            <RcTextarea
+              v-model="testPayload"
+              class="test-payload"
+              :rows="6"
+              :placeholder="t('routeEditor.testPayloadPlaceholder')"
+            />
+          </div>
+          <div class="field">
+            <RcButton type="button" variant="ghost" :loading="testing" @click="runTest">
+              {{ testing ? "…" : t("routeEditor.testRun") }}
+            </RcButton>
+          </div>
+          <div v-if="testResult" class="test-result" :class="{ ok: testResult.matched }">
+            <span class="test-badge">
+              {{
+                testResult.matched ? t("routeEditor.testMatched") : t("routeEditor.testNotMatched")
+              }}
+            </span>
+            <span class="test-explanation">{{ testResult.explanation }}</span>
+          </div>
+          <div v-if="testError" class="err">{{ testError }}</div>
+        </section>
 
-      <section class="editor-section">
-        <h3 class="editor-section-title">{{ t("routeEditor.sectionTargets") }}</h3>
-        <div v-for="(tg, i) in form.targets" :key="i" class="target-card">
-          <div class="target-card-head">
-            <div class="target-platform">
-              <RcSelect
-                v-model="tg.platform"
-                :options="[
-                  { label: 'Discord', value: 'discord' },
-                  { label: 'Telegram', value: 'telegram' },
-                  { label: t('routeEditor.platformFeishu'), value: 'feishu' },
-                ]"
+        <section v-if="groupId" class="editor-section">
+          <h3 class="editor-section-title">{{ t("routeEditor.fragments") }}</h3>
+          <div class="fragments-presets">
+            <span class="hint">{{ t("routeEditor.fragmentsPresets") }}</span>
+            <div v-for="preset in FRAGMENT_PRESETS" :key="preset.id" class="fragment-row">
+              <span class="fragment-name">{{ t(preset.nameKey) }}</span>
+              <RcButton
+                type="button"
+                variant="ghost"
+                size="sm"
+                class="fragment-action"
+                @click="insertNode(preset.node)"
+              >
+                {{ t("routeEditor.fragmentsInsert") }}
+              </RcButton>
+            </div>
+          </div>
+          <div class="fragments-list">
+            <!-- A failed load is said so (never shown as "no fragments"). -->
+            <div v-if="fragmentsLoadError" class="err">
+              {{ t("routeEditor.fragmentsLoadFailed", { error: fragmentsLoadError }) }}
+              <RcButton
+                type="button"
+                variant="ghost"
+                size="sm"
+                @click="groupId && loadFragments(groupId)"
+              >
+                {{ t("routeEditor.fragmentsRetry") }}
+              </RcButton>
+            </div>
+            <div v-else-if="!fragments.length && !fragmentsLoading" class="hint">
+              {{ t("routeEditor.fragmentsEmpty") }}
+            </div>
+            <div v-for="frag in fragments" :key="frag.id" class="fragment-row">
+              <span class="fragment-name">{{ frag.name }}</span>
+              <RcButton
+                type="button"
+                variant="ghost"
+                size="sm"
+                class="fragment-action"
+                @click="insertFragment(frag)"
+              >
+                {{ t("routeEditor.fragmentsInsert") }}
+              </RcButton>
+              <RcButton
+                type="button"
+                variant="ghost"
+                color="error"
+                size="icon"
+                class="h-8 w-8 text-muted hover:text-bad"
+                :disabled="!fragmentsWritable"
+                :title="t('routeEditor.fragmentsDelete')"
+                :aria-label="t('routeEditor.fragmentsDelete')"
+                @click="deleteFragment(frag)"
+              >
+                <Trash2 :size="15" />
+              </RcButton>
+            </div>
+          </div>
+          <div class="fragment-save">
+            <div class="fragment-save-input">
+              <RcInput
+                v-model="fragmentName"
+                :placeholder="t('routeEditor.fragmentsNamePlaceholder')"
               />
             </div>
             <RcButton
               type="button"
               variant="ghost"
-              color="error"
-              size="icon"
-              class="h-8 w-8 text-muted hover:text-bad"
-              :title="t('routeEditor.removeTarget')"
-              :aria-label="t('routeEditor.removeTarget')"
-              @click="removeTarget(tg)"
+              class="shrink-0 whitespace-nowrap"
+              :disabled="!fragmentsWritable"
+              @click="saveAsFragment"
             >
-              <Trash2 :size="15" />
+              {{ t("routeEditor.fragmentsSave") }}
             </RcButton>
           </div>
-          <template v-if="tg.platform === 'discord'">
-            <div class="target-field">
-              <label :for="`target-${i}-channel`">{{ t("routeEditor.channel") }}</label>
-              <RcInput
-                :id="`target-${i}-channel`"
-                v-model="tg.channelId"
-                :placeholder="t('routeEditor.channelPlaceholder')"
-              />
-            </div>
-            <div class="target-field">
-              <label :for="`target-${i}-thread`"
-                >{{ t("routeEditor.thread") }}
-                <span class="lbl-note">{{ t("routeEditor.threadNote") }}</span></label
-              >
-              <RcInput
-                :id="`target-${i}-thread`"
-                v-model="tg.threadId"
-                :placeholder="t('routeEditor.threadPlaceholder')"
-              />
-            </div>
-          </template>
-          <template v-else>
-            <div class="target-field">
-              <label :for="`target-${i}-chat`">{{ t("routeEditor.chat") }}</label>
-              <RcInput
-                :id="`target-${i}-chat`"
-                v-model="tg.chatId"
-                :placeholder="
-                  tg.platform === 'telegram'
-                    ? t('routeEditor.chatPlaceholder')
-                    : t('routeEditor.feishuChatPlaceholder')
-                "
-              />
-            </div>
-            <div v-if="tg.platform === 'telegram'" class="target-field">
-              <label :for="`target-${i}-topic`"
-                >{{ t("routeEditor.topic") }}
-                <span class="lbl-note">{{ t("routeEditor.topicNote") }}</span></label
-              >
-              <RcInput
-                :id="`target-${i}-topic`"
-                v-model="tg.topicId"
-                :placeholder="t('routeEditor.topicPlaceholder')"
-              />
-            </div>
-          </template>
-        </div>
-        <RcButton type="button" variant="ghost" class="add-filter" @click="addTarget">
-          {{ t("routeEditor.addTarget") }}
-        </RcButton>
-        <div v-if="targetError" class="err" data-save-error>{{ targetError }}</div>
-      </section>
+          <div v-if="fragmentError" class="err">{{ fragmentError }}</div>
+        </section>
 
-      <div v-if="formError" class="err" data-save-error>{{ formError }}</div>
+        <section class="editor-section">
+          <h3 class="editor-section-title">{{ t("routeEditor.sectionTargets") }}</h3>
+          <div v-for="(tg, i) in form.targets" :key="i" class="target-card">
+            <div class="target-card-head">
+              <div class="target-platform">
+                <RcSelect
+                  v-model="tg.platform"
+                  :options="[
+                    { label: 'Discord', value: 'discord' },
+                    { label: 'Telegram', value: 'telegram' },
+                    { label: t('routeEditor.platformFeishu'), value: 'feishu' },
+                  ]"
+                />
+              </div>
+              <RcButton
+                type="button"
+                variant="ghost"
+                color="error"
+                size="icon"
+                class="h-8 w-8 text-muted hover:text-bad"
+                :title="t('routeEditor.removeTarget')"
+                :aria-label="t('routeEditor.removeTarget')"
+                @click="removeTarget(tg)"
+              >
+                <Trash2 :size="15" />
+              </RcButton>
+            </div>
+            <template v-if="tg.platform === 'discord'">
+              <div class="target-field">
+                <label :for="`target-${i}-channel`">{{ t("routeEditor.channel") }}</label>
+                <RcInput
+                  :id="`target-${i}-channel`"
+                  v-model="tg.channelId"
+                  :placeholder="t('routeEditor.channelPlaceholder')"
+                />
+              </div>
+              <div class="target-field">
+                <label :for="`target-${i}-thread`"
+                  >{{ t("routeEditor.thread") }}
+                  <span class="lbl-note">{{ t("routeEditor.threadNote") }}</span></label
+                >
+                <RcInput
+                  :id="`target-${i}-thread`"
+                  v-model="tg.threadId"
+                  :placeholder="t('routeEditor.threadPlaceholder')"
+                />
+              </div>
+            </template>
+            <template v-else>
+              <div class="target-field">
+                <label :for="`target-${i}-chat`">{{ t("routeEditor.chat") }}</label>
+                <RcInput
+                  :id="`target-${i}-chat`"
+                  v-model="tg.chatId"
+                  :placeholder="
+                    tg.platform === 'telegram'
+                      ? t('routeEditor.chatPlaceholder')
+                      : t('routeEditor.feishuChatPlaceholder')
+                  "
+                />
+              </div>
+              <div v-if="tg.platform === 'telegram'" class="target-field">
+                <label :for="`target-${i}-topic`"
+                  >{{ t("routeEditor.topic") }}
+                  <span class="lbl-note">{{ t("routeEditor.topicNote") }}</span></label
+                >
+                <RcInput
+                  :id="`target-${i}-topic`"
+                  v-model="tg.topicId"
+                  :placeholder="t('routeEditor.topicPlaceholder')"
+                />
+              </div>
+            </template>
+          </div>
+          <RcButton type="button" variant="ghost" class="add-filter" @click="addTarget">
+            {{ t("routeEditor.addTarget") }}
+          </RcButton>
+          <div v-if="targetError" class="err" data-save-error>{{ targetError }}</div>
+        </section>
+
+        <div v-if="formError" class="err" data-save-error>{{ formError }}</div>
+      </fieldset>
     </form>
 
     <template #footer>

@@ -39,8 +39,8 @@ GitHub Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 
 - **Cloudflare Worker** — HTTP ingress, signature verification, routing, platform dispatch
 - **Interactions Endpoint** — HTTPS callback (no Discord Gateway connection, no Durable Object); the bot stays offline and commands are registered via the API
-- **KV** — cache + ephemeral state: token storage (`token:{userId}`), OAuth state (`state:{hex}`), admin sessions (`session:{id}`), per-group webhook secrets (`tenant:{groupId}`), invites, config cache, delivery dedup/state/message-tracking **fallback** (`delivery:*`, `delivery-state:*`, `msg:*` used only when D1 is unavailable) and message-update locks (`msg:lock:*`)
-- **D1** — source of truth for routes/groups (`d1_routes`/`d1_groups`), named filter fragments (`d1_fragments`), send logs (`send_logs`), audit logs (`audit_logs`), dedup (`dedup_keys`), delivery state (`delivery_state`), message-update tracking (`message_tracking`), Discord↔GitHub links (`discord_links`), Telegram↔GitHub links (`telegram_links`)
+- **KV** — cache + ephemeral state: token storage (`token:{userId}`), OAuth state (`state:{hex}`), admin sessions (`session:{id}`), invites, delivery dedup/state/message-tracking **fallback** (`delivery:*`, `delivery-state:*`, `msg:*` used only when D1 is unavailable) and message-update locks (`msg:lock:*`)
+- **D1** — source of truth for routes/groups (`d1_routes`/`d1_groups`, including each group's webhook secret), named filter fragments (`d1_fragments`), send logs (`send_logs`), audit logs (`audit_logs`), dedup (`dedup_keys`), delivery state (`delivery_state`), message-update tracking (`message_tracking`), Discord↔GitHub links (`discord_links`), Telegram↔GitHub links (`telegram_links`)
 - **Queue** — async delivery when `QUEUE` is bound: `webhooker-delivery` (exponential retry) + DLQ `webhooker-delivery-dlq`; oversized payloads parked in R2 (`PAYLOAD` binding, `webhooks/YYYY/MM/DD/*.json`, falling back to KV `queue:payload:*`)
 
 ## Quick Start
@@ -48,42 +48,44 @@ GitHub Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 ```bash
 bun install          # package manager is bun (lockfile: bun.lock)
 cp .env.example .dev.vars   # Fill in secrets for local dev
-bun run build        # Production build first (wrangler dev serves the built worker)
-bunx wrangler dev    # Start local dev server
+bun run db:migrate   # Apply the D1 migrations to the local database (first run)
+bun run cf:dev       # Build, then serve the worker locally with wrangler dev
 ```
 
 ## Configuration
 
 ### Secrets (`.dev.vars` for local, Worker Secrets for production)
 
-| Variable                    | Description                                                                                    |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `GITHUB_WEBHOOK_SECRET`     | Webhook secret from GitHub                                                                     |
-| `GITEA_WEBHOOK_SECRET`      | Webhook secret from Gitea (required only to receive Gitea webhooks)                            |
-| `GITHUB_APP_ID`             | GitHub App ID (used by the App install flow to resolve the installing account)                 |
-| `GITHUB_PRIVATE_KEY`        | App private key (PKCS#8 PEM; used by the App install flow; optional)                           |
-| `GITHUB_CLIENT_ID`          | OAuth client ID                                                                                |
-| `GITHUB_CLIENT_SECRET`      | OAuth client secret                                                                            |
-| `DISCORD_TOKEN`             | Bot token                                                                                      |
-| `DISCORD_PUBLIC_KEY`        | Discord application public key (from the Developer Portal) — required for interactions         |
-| `DISCORD_APPLICATION_ID`    | Discord application id (optional; auto-resolved via `GET /oauth2/applications/@me` if omitted) |
-| `TELEGRAM_TOKEN`            | Telegram bot token (from BotFather) — required for Telegram routes                             |
-| `TELEGRAM_WEBHOOK_SECRET`   | Optional secret token for `POST /telegram/webhook` verification                                |
-| `TELEGRAM_RICH_HEADER_HOST` | Optional base URL overriding the built-in `GET /api/richheader` for Telegram avatar cards      |
-| `FEISHU_APP_ID`             | Feishu app ID (from the app Credentials page) — required for Feishu routes                     |
-| `FEISHU_APP_SECRET`         | Feishu app secret — required for Feishu routes                                                 |
-| `BASE_URL`                  | Public URL for OAuth callbacks and the Telegram webhook sync                                   |
-| `ADMIN_USER_IDS`            | Comma-separated GitHub user IDs (or logins) allowed to access `/admin`                         |
-| `DEBUG_MODE`                | Local development only: set to exact `true` to bypass all `/admin` authentication              |
-| `ALLOW_SELF_SIGNUP`         | `1` to give access-less GitHub users a personal group on first login (default off)             |
-| `AUDIT_RETENTION_DAYS`      | Audit-log retention in days for the scheduled cleanup (default 90)                             |
-| `NUXT_PUBLIC_DOCS_URL`      | Optional docs site URL used by the landing page                                                |
-| `NUXT_PUBLIC_REPO_URL`      | Optional GitHub repo URL used by the landing page                                              |
-| `NUXT_PUBLIC_LEGAL_CONTACT` | Optional contact shown on `/terms` and `/privacy`                                              |
+| Variable                    | Description                                                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_WEBHOOK_SECRET`     | Webhook secret from GitHub                                                                                                 |
+| `GITEA_WEBHOOK_SECRET`      | Webhook secret from Gitea (required only to receive Gitea webhooks)                                                        |
+| `GITHUB_APP_ID`             | GitHub App ID — the App install flow needs it to verify the installer (otherwise only super admins can bind installations) |
+| `GITHUB_PRIVATE_KEY`        | App private key (PKCS#8 PEM) — needed together with `GITHUB_APP_ID`; also authenticates API enrichment                     |
+| `GITHUB_CLIENT_ID`          | OAuth client ID                                                                                                            |
+| `GITHUB_CLIENT_SECRET`      | OAuth client secret                                                                                                        |
+| `DISCORD_TOKEN`             | Bot token                                                                                                                  |
+| `DISCORD_PUBLIC_KEY`        | Discord application public key (from the Developer Portal) — required for interactions                                     |
+| `DISCORD_APPLICATION_ID`    | Discord application id (optional; auto-resolved via `GET /oauth2/applications/@me` if omitted)                             |
+| `TELEGRAM_TOKEN`            | Telegram bot token (from BotFather) — required for Telegram routes                                                         |
+| `TELEGRAM_WEBHOOK_SECRET`   | Optional secret token for `POST /telegram/webhook` verification (derived from the token if unset)                          |
+| `TELEGRAM_RICH_HEADER_HOST` | Optional base URL overriding the built-in `GET /api/richheader` for Telegram avatar cards                                  |
+| `FEISHU_APP_ID`             | Feishu app ID (from the app Credentials page) — required for Feishu routes                                                 |
+| `FEISHU_APP_SECRET`         | Feishu app secret — required for Feishu routes                                                                             |
+| `FEISHU_ENCRYPT_KEY`        | Feishu event Encrypt Key (signature check + decryption) — this or the token below is required for inbound Feishu commands  |
+| `FEISHU_VERIFICATION_TOKEN` | Feishu event Verification Token, checked on every inbound callback                                                         |
+| `BASE_URL`                  | Public URL for OAuth callbacks and the Telegram webhook sync                                                               |
+| `ADMIN_USER_IDS`            | Comma-separated GitHub user IDs (or logins; numeric ids recommended) of super admins                                       |
+| `DEBUG_MODE`                | Local development only: set to exact `true` to bypass all `/admin` authentication                                          |
+| `ALLOW_SELF_SIGNUP`         | `1` to give access-less GitHub users a personal group on first login (default off)                                         |
+| `AUDIT_RETENTION_DAYS`      | Audit-log retention in days for the scheduled cleanup (default 90)                                                         |
+| `NUXT_PUBLIC_DOCS_URL`      | Optional docs site URL used by the landing page                                                                            |
+| `NUXT_PUBLIC_REPO_URL`      | Optional GitHub repo URL used by the landing page                                                                          |
+| `NUXT_PUBLIC_LEGAL_CONTACT` | Optional contact shown on `/terms` and `/privacy`                                                                          |
 
 ### Routes
 
-Routes are stored in D1 (`d1_routes`, seeded from legacy KV `config:routes` on first load). There are **no default routes** — every route (including its target) must be defined explicitly, either via the Web UI (`/admin`) or by storing a JSON array in D1. A route may carry multiple `targets`, so one rule can forward to several channels at once:
+Routes are stored in D1 (`d1_routes`, seeded from legacy KV `config:routes` on first load). There are **no default routes** — every route (including its target) must be defined explicitly, via the Web UI (`/admin`) or the Admin API. A route may carry multiple `targets`, so one rule can forward to several channels at once:
 
 ```json
 [
@@ -103,7 +105,7 @@ Routes are stored in D1 (`d1_routes`, seeded from legacy KV `config:routes` on f
 ]
 ```
 
-`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (optional `topicId` for a topic). A route may also set `stop: true` (skip later routes of its group). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.elysola.org/guide/routes) and [Groups & Access Control](https://webhooker.docs.elysola.org/guide/groups) guides for the full schema.
+`target.platform` selects the push target: `discord` (default), `telegram`, or `feishu`. Discord targets require `target.channelId` (optional `threadId` for a thread); Telegram targets require a numeric `target.chatId` (optional `topicId` for a topic); Feishu targets require `target.chatId` (`oc_…`; no topics). A route may also set `stop: true` (skip later routes of its group). Routes belong to **groups** (D1 `d1_groups`, seeded from legacy KV `config:groups`) that scope admin access and can restrict which org/user events flow in. See the [Routes & Targets](https://webhooker.docs.elysola.org/guide/routes) and [Groups & Access Control](https://webhooker.docs.elysola.org/guide/groups) guides for the full schema.
 
 ### Web UI (`/admin`)
 
@@ -172,7 +174,7 @@ Every filter supports plain text, `*`/`?` globs, and `/regex/` patterns (case-in
 
 ### Bot Commands (comment on GitHub as yourself)
 
-The bot registers native **slash** and **message context-menu** commands, synced by the scheduled trigger (every 5 minutes): per-guild for instant availability, and globally (24h dedup, ~1h propagation). After `/gh login` you can comment on issues/PRs as yourself, edit/delete your comments, and merge/close PRs via buttons — all replies are ephemeral and GitHub enforces permission.
+The bot registers native **slash** and **message context-menu** commands, synced by the scheduled trigger (every 5 minutes): per-guild for instant availability, and globally (~1h propagation); both are re-registered when the command definitions change. After `/gh login` you can comment on issues/PRs as yourself, edit/delete your comments, and merge/close PRs via buttons — all replies are ephemeral and GitHub enforces permission.
 
 ```
 /gh login  /gh logout

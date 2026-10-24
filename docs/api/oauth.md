@@ -42,12 +42,21 @@ GitHub redirects here after authorization. Exchanges the code for an access toke
 | `code`    | Authorization code                  |
 | `state`   | State parameter for CSRF protection |
 
+A sign-in started in the browser (`GET /auth/github`) must come back with the `wh_oauth_state` cookie that start set; otherwise the callback answers `400 Invalid or expired state`.
+
 **Response:**
 
 - **Browser flow** (`Accept: text/html`): sets an admin session cookie, then redirects to the `redirect` target. Users without admin access are redirected to `/admin?error=forbidden`.
 - **JSON flow**: returns `{ "userId": "...", "login": "...", "redirectTo": "..." }`.
-- **Discord link flow** (started with a pending `discordUserId`): links the Discord user to this GitHub account, returning `{ "ok": true, "discordUserId": "...", "login": "..." }` — or a success page in the browser.
-- **Telegram link flow** (started with a pending `telegramUserId`): links the Telegram user to this GitHub account, returns `{ "ok": true, "telegramUserId": "...", "login": "..." }`, and sends a confirmation message to the pending `telegramChatId`.
+- **Bot account link** (started by `/gh login` on Discord, Telegram or Feishu): nothing is linked yet. The callback answers with an HTML confirmation page that names both the GitHub account and the chat account; the link is written only when the GitHub user confirms it there.
+
+### Confirm Bot Account Link
+
+```
+POST /auth/github/link
+```
+
+Submitted by the confirmation page (form field `nonce`, valid for 10 minutes and usable once). Links the chat account to the GitHub account and answers with an HTML result page; an unknown, expired or already used `nonce` gets `400` ("link expired").
 
 ### Revoke Token
 
@@ -55,7 +64,7 @@ GitHub redirects here after authorization. Exchanges the code for an access toke
 DELETE /auth/token/:userId
 ```
 
-Removes the stored OAuth token for a user.
+Removes the stored OAuth token for a user (your own, or any user's for a super admin). The revocation is recorded in D1, so the token stops working everywhere at once, even where KV has not caught up yet.
 
 **Response:**
 
@@ -74,11 +83,11 @@ Tokens are stored in KV with key pattern `token:{userId}`:
   "userId": "12345",
   "accessToken": "gho_...",
   "expiresAt": 1735689600000,
-  "refreshToken": "..."
+  "live": true
 }
 ```
 
-`expiresAt` is a Unix timestamp in milliseconds. KV entries expire at 90% of the token's lifetime (minimum 60 seconds). A reverse index `token-reverse:{sha256 of token}` maps the access token back to its user id so Bearer-authenticated endpoints can resolve the caller. Discord users linked to a GitHub account are stored in the D1 `discord_links` table; Telegram users in the D1 `telegram_links` table.
+`expiresAt` is a Unix timestamp in milliseconds. A stored token is used for 10 hours; the KV entry expires after 9 hours (90%). Tokens are not refreshed — after that, sign in (or run `/gh login`) again. `live` marks a token whose "current token" record is kept in D1: signing in again or signing out invalidates the previous token everywhere at once. A reverse index `token-reverse:{sha256 of token}` maps the access token back to its user id so Bearer-authenticated endpoints can resolve the caller. Discord users linked to a GitHub account are stored in the D1 `discord_links` table; Telegram users in the D1 `telegram_links` table.
 
 ## Using Tokens
 

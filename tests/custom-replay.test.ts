@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { createHmac } from "crypto";
-import { customProvider } from "../server/lib/providers/custom";
+import { customProvider, ReplayPendingError, replayNonceKey } from "../server/lib/providers/custom";
+import { acceptedKey, idempotencyStore } from "../server/lib/lib/idempotency";
 import type { Env } from "../server/lib/types";
 
 function createMockKV(): KVNamespace {
@@ -60,7 +61,27 @@ describe("custom provider replay protection", () => {
       "x-webhooker-nonce": nonce,
     };
     expect(await customProvider.verify(body, headers, env)).toBe(true);
+    // While the first request is not confirmed as accepted, the nonce is
+    // neither free nor a proven replay.
+    expect(customProvider.verify(body, headers, env)).rejects.toBeInstanceOf(ReplayPendingError);
+    const key = await replayNonceKey(secret, nonce);
+    await idempotencyStore(env.DB, env.KV).claim(acceptedKey(key), 600);
     expect(await customProvider.verify(body, headers, env)).toBe(false);
+  });
+
+  it("scopes nonces to the signing secret", async () => {
+    const kv = createMockKV();
+    const body = JSON.stringify({ hello: "world" });
+    const nonce = "shared-nonce";
+    for (const secret of ["tenant-a", "tenant-b"]) {
+      const env = { ...createEnv(secret), KV: kv };
+      const headers = {
+        "x-webhooker-signature": replaySignature(secret, now, nonce, body),
+        "x-webhooker-timestamp": String(now),
+        "x-webhooker-nonce": nonce,
+      };
+      expect(await customProvider.verify(body, headers, env)).toBe(true);
+    }
   });
 
   it("rejects a timestamp outside the window", async () => {

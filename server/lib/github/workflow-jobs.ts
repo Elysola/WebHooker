@@ -1,4 +1,10 @@
-import { getInstallationToken, GITHUB_API_VERSION, GITHUB_USER_AGENT } from "./app-token";
+import {
+  getInstallationToken,
+  githubApiUrl,
+  ENRICH_TIMEOUT_MS,
+  GITHUB_API_VERSION,
+  GITHUB_USER_AGENT,
+} from "./app-token";
 
 export interface WorkflowJob {
   name?: string;
@@ -24,10 +30,10 @@ export async function getWorkflowRunJobs(
   privateKey: string | undefined,
   installationId: number | undefined,
 ): Promise<WorkflowJob[] | undefined> {
-  if (!jobsUrl) return undefined;
+  const url = githubApiUrl(jobsUrl);
+  if (!url) return undefined;
   try {
     const token = await getInstallationToken(appId, privateKey, installationId);
-    const url = new URL(jobsUrl);
     url.searchParams.set("per_page", "100");
     const headers: Record<string, string> = {
       Accept: "application/vnd.github+json",
@@ -35,7 +41,12 @@ export async function getWorkflowRunJobs(
       "User-Agent": GITHUB_USER_AGENT,
     };
     if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(url.toString(), { headers });
+    // No redirects: a token must never follow a response to another host.
+    const res = await fetch(url.toString(), {
+      headers,
+      redirect: "manual",
+      signal: AbortSignal.timeout(ENRICH_TIMEOUT_MS),
+    });
     if (!res.ok) return undefined;
     const data = (await res.json()) as { jobs?: WorkflowJob[] };
     return data.jobs?.length ? data.jobs : undefined;

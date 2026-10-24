@@ -46,11 +46,12 @@
           type="text"
           size="sm"
           :placeholder="t('members.addPlaceholder')"
+          :disabled="saving"
           @keydown.enter.prevent="addMember"
         />
       </div>
       <div class="member-role">
-        <RcSelect v-model="newRole" :options="roleOptions" />
+        <RcSelect v-model="newRole" :options="roleOptions" :disabled="saving" />
       </div>
       <RcButton type="button" size="sm" class="h-9" :disabled="saving" @click="addMember">
         {{ t("members.addBtn") }}
@@ -76,6 +77,9 @@
           {{ t("members.createInvite") }}
         </RcButton>
       </div>
+      <p v-if="invitesError" class="err">
+        {{ t("members.invitesFailed", { error: invitesError }) }}
+      </p>
       <ul v-if="invites.length" class="invite-list">
         <li v-for="inv in invites" :key="inv.token" class="invite-row">
           <code class="invite-token">{{ shortToken(inv.token) }}</code>
@@ -93,7 +97,7 @@
           </div>
         </li>
       </ul>
-      <p v-else class="empty-log">{{ t("members.noInvites") }}</p>
+      <p v-else-if="!invitesError" class="empty-log">{{ t("members.noInvites") }}</p>
     </div>
 
     <div class="err">{{ formError }}</div>
@@ -115,6 +119,8 @@ const emit = defineEmits<{ (e: "save", group: Group): void }>();
 const invitesApi = useInvitesApi();
 const members = ref<GroupMember[]>([]);
 const invites = ref<GroupInvite[]>([]);
+/** The last list load failed (the list shown, if any, is the one before). */
+const invitesError = ref("");
 const newLogin = ref("");
 const newRole = ref<GroupRole>("admin");
 const inviteRole = ref<"admin" | "viewer">("admin");
@@ -132,16 +138,34 @@ const inviteRoleOptions = computed(() =>
 
 watch(
   () => props.group,
-  (g) => {
-    members.value = (g.members ?? []).map((m) => ({ ...m }));
+  (g, prev) => {
+    // A group from before member roles lists its owners in `adminIds` only:
+    // read as owners (as the server does), so a save never drops them.
+    members.value = g.members?.length
+      ? g.members.map((m) => ({ ...m }))
+      : (g.adminIds ?? []).map((login) => ({ login, role: "owner" as const }));
     formError.value = "";
+    // Another group's invites are never shown, not even while loading.
+    if (g.id !== prev?.id) {
+      invites.value = [];
+      invitesError.value = "";
+    }
     if (props.canEdit) loadInvites();
   },
   { immediate: true },
 );
 
 async function loadInvites(): Promise<void> {
-  invites.value = await invitesApi.list(props.group.id);
+  const groupId = props.group.id;
+  try {
+    const list = await invitesApi.list(groupId);
+    if (props.group.id !== groupId) return;
+    invites.value = list;
+    invitesError.value = "";
+  } catch (err) {
+    if (props.group.id !== groupId) return;
+    invitesError.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 function ownerCount(): number {
@@ -149,6 +173,9 @@ function ownerCount(): number {
 }
 
 function onRoleChange(m: GroupMember, role: string): void {
+  // One save at a time: a change made meanwhile would be overwritten by the
+  // first save's result (and the second save refused).
+  if (props.saving) return;
   const nextRole = role as GroupRole;
   if (nextRole === "viewer" && m.role === "owner" && ownerCount() === 1) {
     formError.value = t("members.errLastOwner");
@@ -159,6 +186,7 @@ function onRoleChange(m: GroupMember, role: string): void {
 }
 
 function addMember(): void {
+  if (props.saving) return;
   const login = newLogin.value.trim();
   if (!login) return;
   if (members.value.some((m) => m.login.toLowerCase() === login.toLowerCase())) {
@@ -180,7 +208,7 @@ async function removeMember(m: GroupMember): Promise<void> {
     title: t("confirm.removeMember", { name: m.login }),
     confirmText: t("members.remove"),
   });
-  if (!confirmed) return;
+  if (!confirmed || props.saving) return;
   members.value = members.value.filter((x) => x !== m);
   emitSave();
 }

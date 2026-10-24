@@ -1,7 +1,7 @@
 import type { H3Event } from "h3";
 import { createError, getHeader } from "h3";
 import type { Group, GroupRole } from "../types";
-import { getAdminSession, isDebugMode, type AdminSession } from "./session";
+import { authLogin, getAdminSession, isDebugMode, type AdminSession } from "./session";
 import {
   loadGroups,
   resolveScope,
@@ -28,14 +28,15 @@ const AUTH_KEY = "auth";
 export async function loadAuth(event: H3Event): Promise<AuthContext | null> {
   const env = cfEnv(event);
   initConfigStore(env);
-  const groups = await loadGroups(env.KV);
-  if (isDebugMode(env)) {
-    const session: AdminSession = { userId: "debug", login: "debug" };
-    return { session, scope: resolveScope(env, groups, session.userId, session.login), groups };
-  }
-  const session = await getAdminSession(env.KV, getHeader(event, "cookie"));
+  // The session first: a request without one reads no configuration.
+  const session: AdminSession | null = isDebugMode(env)
+    ? { userId: "debug", login: "debug" }
+    : await getAdminSession(env.KV, getHeader(event, "cookie"), env.DB);
   if (!session) return null;
-  const scope = resolveScope(env, groups, session.userId, session.login);
+  // Access checks read the authoritative store: a membership revoked in
+  // another isolate must not linger in this one's cache.
+  const groups = await loadGroups(env.KV, { fresh: true });
+  const scope = resolveScope(env, groups, session.userId, authLogin(session));
   return { session, scope, groups };
 }
 
@@ -99,7 +100,8 @@ export async function bearerUserId(event: H3Event): Promise<string> {
   const auth = getHeader(event, "authorization");
   if (!auth?.startsWith("Bearer "))
     throw createError({ statusCode: 401, statusMessage: "Missing authorization" });
-  const userId = await findUserIdByToken(env.KV, auth.slice(7));
+  // Resolves only the user's *current* token: a rotated or revoked one fails.
+  const userId = await findUserIdByToken(env.KV, auth.slice(7), env.DB);
   if (!userId) throw createError({ statusCode: 401, statusMessage: "Invalid or expired token" });
   return userId;
 }

@@ -67,30 +67,42 @@ export function commitLink(baseUrl: string | undefined, sha: string, short?: str
   return baseUrl ? `[\`${label}\`](${baseUrl}/commit/${encodeRefPath(sha)})` : `\`${label}\``;
 }
 
-/** Inline code + hyperlink for a branch (or bare ref), e.g. [`main`](.../tree/main). */
+/**
+ * A ref's short name: only one leading `refs/heads/` or `refs/tags/` goes —
+ * a branch may itself contain such a path (`feature/refs/tags/test`).
+ */
+export function shortRef(ref: string): string {
+  return ref.replace(/^refs\/(?:heads|tags)\//, "");
+}
+
+/**
+ * Inline code + hyperlink for a branch, e.g. [`main`](.../tree/main). Takes
+ * the short name, as written (a branch may well be called `refs/heads/x`);
+ * a full ref is shortened by the caller (`shortRef`).
+ */
 export function branchLink(baseUrl: string | undefined, branch: string, label?: string): string {
-  const clean = branch.replace("refs/heads/", "").replace("refs/tags/", "");
+  const clean = branch;
   const display = label ?? clean;
   return baseUrl ? `[\`${display}\`](${baseUrl}/tree/${encodeRefPath(clean)})` : `\`${display}\``;
 }
 
-/** Inline code + hyperlink for a tag, e.g. [`v1.0`](.../releases/tag/v1.0). */
+/** Inline code + hyperlink for a tag (its short name), e.g. [`v1.0`](.../releases/tag/v1.0). */
 export function tagLink(baseUrl: string | undefined, tag: string, label?: string): string {
-  const clean = tag.replace("refs/tags/", "");
+  const clean = tag;
   const display = label ?? clean;
   return baseUrl
     ? `[\`${display}\`](${baseUrl}/releases/tag/${encodeRefPath(clean)})`
     : `\`${display}\``;
 }
 
-/** URL for a branch or tag, when the repository base URL is available. */
+/** URL for a branch or tag (its short name), when the repository base URL is available. */
 export function refUrl(
   baseUrl: string | undefined,
   ref: string,
   type: "branch" | "tag",
 ): string | undefined {
   if (!baseUrl) return undefined;
-  const clean = ref.replace("refs/heads/", "").replace("refs/tags/", "");
+  const clean = ref;
   return type === "tag"
     ? `${baseUrl}/releases/tag/${encodeRefPath(clean)}`
     : `${baseUrl}/tree/${encodeRefPath(clean)}`;
@@ -110,28 +122,105 @@ export function cap(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
 }
 
+/** A numeric character reference, kept verbatim when it names no valid code point. */
+function codePoint(value: number, original: string): string {
+  if (!Number.isInteger(value) || value < 0 || value > 0x10ffff) return original;
+  if (value >= 0xd800 && value <= 0xdfff) return original;
+  return String.fromCodePoint(value);
+}
+
+/**
+ * Markdown code and autolinks, which are text as written (see `htmlToText`):
+ * - a fenced block — ``` or ~~~ (3 or more) at a line start, closed by a
+ *   fence of that same character, at least as long, or by the end of the text;
+ * - an indented code block — lines indented by 4 spaces or a tab;
+ * - an inline span — a run of backticks closed by a run of the same length
+ *   within 1000 characters (a shorter or longer run inside is content),
+ *   possibly across lines — bounded, so unmatched runs cost little;
+ * - an autolink — `<scheme:…>` or an e-mail address `<name@host>`.
+ */
+const MARKDOWN_VERBATIM =
+  /^ {0,3}(?<fence>(?<fc>[`~])\k<fc>{2,})[^\n]*(?:\n[\s\S]*?(?:\n {0,3}\k<fence>\k<fc>*[ \t]*(?=\n|$(?![\s\S]))|$(?![\s\S]))|$(?![\s\S]))|^(?: {4}|\t)[^\n]*(?:\n(?: {4}|\t)[^\n]*)*|(?<!`)(?<tick>`+)(?!`)[\s\S]{0,1000}?(?<!`)\k<tick>(?!`)|<[a-z][a-z0-9+.-]*:[^\s<>]*>|<[^\s<>@]+@[^\s<>@]+>/gim;
+
+/**
+ * Most of a body cleaned: callers keep a few hundred characters of the
+ * result, and an unbounded body (megabytes of markup) must not cost an
+ * unbounded amount of CPU on every delivery and retry.
+ */
+const MAX_HTML_INPUT = 10_000;
+
+/**
+ * Recent results: one event's body is summarized for every route it matches
+ * (each route formats its own message), so the same text is cleaned once.
+ */
+const htmlToTextCache = new Map<string, string>();
+const HTML_TO_TEXT_CACHE_SIZE = 32;
+
 export function htmlToText(input: string): string {
   if (!input) return "";
+  const cached = htmlToTextCache.get(input);
+  if (cached !== undefined) return cached;
+  const result = htmlToTextUncached(input);
+  if (htmlToTextCache.size >= HTML_TO_TEXT_CACHE_SIZE) {
+    htmlToTextCache.delete(htmlToTextCache.keys().next().value!);
+  }
+  htmlToTextCache.set(input, result);
+  return result;
+}
+
+function htmlToTextUncached(input: string): string {
+  const text = input.length > MAX_HTML_INPUT ? input.slice(0, MAX_HTML_INPUT) : input;
+  // Markdown code and autolinks are text as written: `<T>` or
+  // `<MyComponent />` there is content, not HTML to strip, an entity there is
+  // literal, and its spacing (a leading indent included) is its own. Only the
+  // text around them is cleaned and trimmed.
+  const parts: Array<{ text: string; verbatim: boolean }> = [];
+  let last = 0;
+  for (const m of text.matchAll(MARKDOWN_VERBATIM)) {
+    parts.push({ text: clean(text.slice(last, m.index)), verbatim: false });
+    parts.push({ text: m[0], verbatim: true });
+    last = m.index + m[0].length;
+  }
+  parts.push({ text: clean(text.slice(last)), verbatim: false });
+  const first = parts.findIndex((p) => p.text.trim() !== "");
+  if (first < 0) return "";
+  const kept = parts.slice(first);
+  while (kept.length && kept[kept.length - 1]!.text.trim() === "") kept.pop();
+  if (!kept[0]!.verbatim) kept[0]!.text = kept[0]!.text.trimStart();
+  const end = kept[kept.length - 1]!;
+  if (!end.verbatim) end.text = end.text.trimEnd();
+  return kept.map((p) => p.text).join("");
+}
+
+function clean(text: string): string {
+  return stripHtml(text)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+function stripHtml(input: string): string {
+  // A tag never spans another `<`: each `<` is looked at once, so text full
+  // of unclosed `<` stays linear.
   let out = input
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<table[^>]*>/gi, "\n")
+    .replace(/<table[^<>]*>/gi, "\n")
     .replace(/<\/(p|div|tr|h[1-6]|ul|ol|table|blockquote)>/gi, "\n")
     .replace(/<\/t[dh]>/gi, "  ")
-    .replace(/<li[^>]*>/gi, "\n• ")
-    .replace(/<[^>]+>/g, "");
+    .replace(/<li[^<>]*>/gi, "\n• ")
+    // A prefix such as `<script` is still dangerous when the closing `>` is
+    // absent or is supplied later by a renderer. Remove the opening bracket
+    // itself after known HTML has been converted to text.
+    .replace(/<[^<>]+>/g, "")
+    .replace(/</g, "");
   out = out
     .replace(/&nbsp;/gi, " ")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&apos;/gi, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(Number(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, hex: string) => codePoint(parseInt(hex, 16), m))
+    .replace(/&#(\d+);/g, (m, dec: string) => codePoint(Number(dec), m))
     .replace(/&amp;/gi, "&");
-  out = out
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
   return out;
 }
 
