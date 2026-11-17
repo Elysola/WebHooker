@@ -268,6 +268,9 @@ export function chainLock(
   if (!useD1) return kvLock;
   return {
     async acquire(key, ttlSeconds): Promise<string | null> {
+      // A lock taken while delivering through KV (before switching back) is
+      // honored too: another holder would edit the same message chain.
+      if ((await kvFallbackActive(kv)) && (await kv.get(key))) return null;
       const now = Date.now();
       try {
         const result = await db

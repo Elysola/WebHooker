@@ -36,8 +36,9 @@ export function deliveryStateStore(env: Pick<Env, "DELIVERY_STATE_STORE">): Deli
  * their confirmations, delivery states, the finished-target ledger, message
  * tracking (30 days) — are invisible, so a redelivery of an event that already
  * finished is sent again, targets already sent are sent again, and an
- * in-progress `workflow_run`/`check_run` chain posts a new message. Switching
- * on a quiet deployment, or draining the queue first, avoids that.
+ * in-progress `workflow_run`/`check_run` chain posts a new message. Draining
+ * the queue only keeps in-flight deliveries from overlapping; the D1 rows stay
+ * invisible either way, so carry the state over (or accept the repeats).
  */
 export function deliveryStateUsesD1(env: Pick<Env, "DB" | "DELIVERY_STATE_STORE">): boolean {
   return deliveryStateStore(env) === "d1" && canUseD1(env.DB);

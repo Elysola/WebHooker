@@ -260,6 +260,11 @@ export async function acquireDelivery(env: Env, key: string): Promise<Lease> {
         if (kvState && FINISHED.has(kvState.status)) {
           return { status: "finished", token: null };
         }
+        // A holder delivering through KV (before switching back) keeps its
+        // delivery for the rest of its lease.
+        if (kvState?.status === "processing" && kvState.at > Date.now() - LEASE_MS) {
+          return { status: "busy", token: null };
+        }
       }
       const now = Date.now();
       const result = await db
@@ -303,6 +308,12 @@ export async function markDeliveryDead(
 ): Promise<"dead" | "finished" | "busy"> {
   if (deliveryStateUsesD1(env)) {
     try {
+      // A holder delivering through KV (before switching back) keeps its
+      // delivery: the DLQ copy must not close it under that holder.
+      if (await kvFallbackActive(env.KV)) {
+        const kvState = await readKvDeliveryState(env, key);
+        if (kvState?.status === "processing" && kvState.at > Date.now() - LEASE_MS) return "busy";
+      }
       const now = Date.now();
       const result = await env.DB.prepare(
         `INSERT INTO delivery_state (key, status, updated_at) VALUES (?, 'dead', ?)

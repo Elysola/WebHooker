@@ -275,6 +275,34 @@ describe("switching back to d1", () => {
     expect(await targetDoneChecker(switched, stateKey)("discord:1")).toBe(true);
     expect(await hadPermanentFailure(switched, stateKey)).toBe(true);
   });
+
+  it("keeps a live kv lease off a d1 acquisition", async () => {
+    const { env, sqlite, store } = storeEnv();
+    const key = deliveryStateKey("github", "g1", "d1");
+    store.set("storage:kv-fallback", String(Date.now() + 86_400_000));
+    store.set(key, JSON.stringify({ status: "processing", at: Date.now() }));
+    expect(await acquireDelivery(env, key)).toEqual({ status: "busy", token: null });
+    expect(rows(sqlite, "delivery_state")).toBe(0);
+
+    store.set(key, JSON.stringify({ status: "processing", at: Date.now() - 6 * 60_000 }));
+    const lease = await acquireDelivery(env, key);
+    expect(lease.status).toBe("acquired");
+    expect(lease.token).not.toBeNull();
+    expect(rows(sqlite, "delivery_state")).toBe(1);
+  });
+
+  it("keeps a live kv lease from being marked dead by the d1 path", async () => {
+    const { env, sqlite, store } = storeEnv();
+    const key = deliveryStateKey("github", "g1", "d1");
+    store.set("storage:kv-fallback", String(Date.now() + 86_400_000));
+    store.set(key, JSON.stringify({ status: "processing", at: Date.now() }));
+    expect(await markDeliveryDead(env, key)).toBe("busy");
+    expect(rows(sqlite, "delivery_state")).toBe(0);
+
+    store.set(key, JSON.stringify({ status: "processing", at: Date.now() - 6 * 60_000 }));
+    expect(await markDeliveryDead(env, key)).toBe("dead");
+    expect(rows(sqlite, "delivery_state")).toBe(1);
+  });
 });
 
 describe("deliveryClaimStore", () => {
@@ -373,5 +401,21 @@ describe("chainLock with an explicit store", () => {
     await lock.release("chain:1", token as string);
     expect(rows(sqlite, "dedup_keys")).toBe(0);
     expect(await lock.acquire("chain:1", 60)).not.toBeNull();
+  });
+
+  it("waits for a lock a kv-mode holder still has, in d1 mode", async () => {
+    const { env, sqlite, store } = storeEnv();
+    const lock = chainLock(env.DB, env.KV);
+    store.set("storage:kv-fallback", String(Date.now() + 86_400_000));
+    store.set("chain:1", "held-in-kv");
+    expect(await lock.acquire("chain:1", 60)).toBeNull();
+    expect(rows(sqlite, "dedup_keys")).toBe(0);
+
+    store.delete("chain:1");
+    const token = await lock.acquire("chain:1", 60);
+    expect(token).not.toBeNull();
+    expect(rows(sqlite, "dedup_keys")).toBe(1);
+    await lock.release("chain:1", token as string);
+    expect(rows(sqlite, "dedup_keys")).toBe(0);
   });
 });
