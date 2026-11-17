@@ -21,9 +21,11 @@ import { chainLock, messageTracker } from "../server/lib/lib/message-tracker";
 import { createMemoryKV, createSqliteD1 } from "./d1-sqlite";
 import type { Env } from "../server/lib/types";
 
-function storeEnv(
-  options: { mode?: string; db?: D1Database; kv?: KVNamespace } = {},
-): { env: Env; sqlite: Database; store: Map<string, string> } {
+function storeEnv(options: { mode?: string; db?: D1Database; kv?: KVNamespace } = {}): {
+  env: Env;
+  sqlite: Database;
+  store: Map<string, string>;
+} {
   const { db, sqlite } = createSqliteD1();
   const memory = createMemoryKV();
   return {

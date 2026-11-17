@@ -56,33 +56,33 @@ bun run cf:dev       # 先构建，再用 wrangler dev 在本地运行 worker
 
 ### 密钥（本地用 `.dev.vars`，生产用 Worker Secrets）
 
-| 变量                        | 说明                                                                          |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| `GITHUB_WEBHOOK_SECRET`     | GitHub webhook 密钥                                                           |
-| `GITEA_WEBHOOK_SECRET`      | Gitea webhook 密钥（仅接收 Gitea webhook 时需要）                             |
-| `GITHUB_APP_ID`             | GitHub App ID——App 安装流程需要它核实安装者（没有时只有超级管理员能绑定安装） |
-| `GITHUB_PRIVATE_KEY`        | App 私钥（PKCS#8 PEM）——需与 `GITHUB_APP_ID` 一起配置，也用于 API 增强鉴权    |
-| `GITHUB_CLIENT_ID`          | OAuth Client ID                                                               |
-| `GITHUB_CLIENT_SECRET`      | OAuth Client Secret                                                           |
-| `DISCORD_TOKEN`             | 机器人 token                                                                  |
-| `DISCORD_PUBLIC_KEY`        | Discord 应用的公钥（开发者门户获取）—— 交互功能必需                           |
-| `DISCORD_APPLICATION_ID`    | Discord 应用 ID（可选；省略时通过 `GET /oauth2/applications/@me` 自动获取）   |
-| `TELEGRAM_TOKEN`            | Telegram Bot Token（BotFather 获取）—— Telegram 路由必需                      |
-| `TELEGRAM_WEBHOOK_SECRET`   | 可选；`POST /telegram/webhook` 的验签密钥（未设置时由 token 派生）            |
-| `TELEGRAM_RICH_HEADER_HOST` | 可选；覆盖内置 `GET /api/richheader` 的 Telegram 头像卡片地址                 |
-| `FEISHU_APP_ID`             | 飞书应用 ID（应用凭证页获取）—— 飞书路由必需                                  |
-| `FEISHU_APP_SECRET`         | 飞书应用密钥 —— 飞书路由必需                                                  |
-| `FEISHU_ENCRYPT_KEY`        | 飞书事件 Encrypt Key（验签 + 解密）—— 飞书入站命令需要它或下面的 token        |
-| `FEISHU_VERIFICATION_TOKEN` | 飞书事件 Verification Token，每个入站回调都会校验                             |
-| `BASE_URL`                  | 公网地址（用于 OAuth 回调与 Telegram webhook 同步）                           |
-| `ADMIN_USER_IDS`            | 超级管理员的 GitHub 用户 ID（或登录名，建议写数字 ID），逗号分隔              |
-| `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证                      |
-| `ALLOW_SELF_SIGNUP`         | 设为 `1` 时，无权限的 GitHub 用户首次登录自动获得个人分组（默认关闭）         |
-| `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数（默认 90）                                       |
+| 变量                        | 说明                                                                                          |
+| --------------------------- | --------------------------------------------------------------------------------------------- |
+| `GITHUB_WEBHOOK_SECRET`     | GitHub webhook 密钥                                                                           |
+| `GITEA_WEBHOOK_SECRET`      | Gitea webhook 密钥（仅接收 Gitea webhook 时需要）                                             |
+| `GITHUB_APP_ID`             | GitHub App ID——App 安装流程需要它核实安装者（没有时只有超级管理员能绑定安装）                 |
+| `GITHUB_PRIVATE_KEY`        | App 私钥（PKCS#8 PEM）——需与 `GITHUB_APP_ID` 一起配置，也用于 API 增强鉴权                    |
+| `GITHUB_CLIENT_ID`          | OAuth Client ID                                                                               |
+| `GITHUB_CLIENT_SECRET`      | OAuth Client Secret                                                                           |
+| `DISCORD_TOKEN`             | 机器人 token                                                                                  |
+| `DISCORD_PUBLIC_KEY`        | Discord 应用的公钥（开发者门户获取）—— 交互功能必需                                           |
+| `DISCORD_APPLICATION_ID`    | Discord 应用 ID（可选；省略时通过 `GET /oauth2/applications/@me` 自动获取）                   |
+| `TELEGRAM_TOKEN`            | Telegram Bot Token（BotFather 获取）—— Telegram 路由必需                                      |
+| `TELEGRAM_WEBHOOK_SECRET`   | 可选；`POST /telegram/webhook` 的验签密钥（未设置时由 token 派生）                            |
+| `TELEGRAM_RICH_HEADER_HOST` | 可选；覆盖内置 `GET /api/richheader` 的 Telegram 头像卡片地址                                 |
+| `FEISHU_APP_ID`             | 飞书应用 ID（应用凭证页获取）—— 飞书路由必需                                                  |
+| `FEISHU_APP_SECRET`         | 飞书应用密钥 —— 飞书路由必需                                                                  |
+| `FEISHU_ENCRYPT_KEY`        | 飞书事件 Encrypt Key（验签 + 解密）—— 飞书入站命令需要它或下面的 token                        |
+| `FEISHU_VERIFICATION_TOKEN` | 飞书事件 Verification Token，每个入站回调都会校验                                             |
+| `BASE_URL`                  | 公网地址（用于 OAuth 回调与 Telegram webhook 同步）                                           |
+| `ADMIN_USER_IDS`            | 超级管理员的 GitHub 用户 ID（或登录名，建议写数字 ID），逗号分隔                              |
+| `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证                                      |
+| `ALLOW_SELF_SIGNUP`         | 设为 `1` 时，无权限的 GitHub 用户首次登录自动获得个人分组（默认关闭）                         |
+| `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数（默认 90）                                                       |
 | `DELIVERY_STATE_STORE`      | 设为 `kv` 时 webhook 投递状态（去重、租约、目标台账、消息追踪）存放于 KV 而非 D1（默认 `d1`） |
-| `NUXT_PUBLIC_DOCS_URL`      | 可选；落地页使用的文档站点 URL                                                |
-| `NUXT_PUBLIC_REPO_URL`      | 可选；落地页使用的 GitHub 仓库 URL                                            |
-| `NUXT_PUBLIC_LEGAL_CONTACT` | 可选；`/terms` 与 `/privacy` 页面展示的联系方式                               |
+| `NUXT_PUBLIC_DOCS_URL`      | 可选；落地页使用的文档站点 URL                                                                |
+| `NUXT_PUBLIC_REPO_URL`      | 可选；落地页使用的 GitHub 仓库 URL                                                            |
+| `NUXT_PUBLIC_LEGAL_CONTACT` | 可选；`/terms` 与 `/privacy` 页面展示的联系方式                                               |
 
 ### 路由配置
 
