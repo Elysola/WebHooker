@@ -56,6 +56,7 @@ WebHooker 的运行需要若干密钥。本地开发时放入 `.dev.vars`，生�
 | `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证并授予完整权限                                    | 关闭                     |
 | `ALLOW_SELF_SIGNUP`         | 开启（`1`/`true`）后，没有任何分组权限的 GitHub 用户首次登录会自动获得隔离的个人分组而非 403              | 关闭                     |
 | `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数                                                                              | `90`                     |
+| `DELIVERY_STATE_STORE`      | webhook 投递状态存放位置：`d1`（默认）或 `kv`。KV 在边缘响应，但免费版每日仅约 1000 次写——见[存储决策](./storage#存储决策) | `d1`                     |
 | `NUXT_PUBLIC_DOCS_URL`      | 落地页使用的文档站 URL（客户端运行时配置）                                                                | 落地页默认值             |
 | `NUXT_PUBLIC_REPO_URL`      | 落地页使用的 GitHub 仓库 URL                                                                              | 落地页默认值             |
 | `NUXT_PUBLIC_LEGAL_CONTACT` | `/terms` 与 `/privacy` 页面展示的联系方式                                                                 | 未设置时显示占位文本     |

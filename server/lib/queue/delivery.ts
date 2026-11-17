@@ -1,7 +1,8 @@
 import type { Env } from "../types";
 import { r2PayloadStore } from "../storage/payload";
-import { canUseD1, isMissingTable, kvFallbackActive, noteKvFallback } from "../storage/d1";
-import { idempotencyStore, kvIdempotencyStore, tenantScope } from "../lib/idempotency";
+import { isMissingTable, kvFallbackActive, noteKvFallback } from "../storage/d1";
+import { deliveryClaimStore, deliveryStateUsesD1 } from "../storage/state-store";
+import { kvIdempotencyStore, tenantScope } from "../lib/idempotency";
 import { log } from "../lib/log";
 
 export type DeliveryStatus =
@@ -162,7 +163,7 @@ export async function setDeliveryState(
   status: DeliveryStatus,
 ): Promise<void> {
   const db = env.DB;
-  if (canUseD1(db)) {
+  if (deliveryStateUsesD1(env)) {
     try {
       await db
         .prepare(
@@ -188,7 +189,7 @@ export async function setDeliveryState(
 
 export async function getDeliveryState(env: Env, key: string): Promise<DeliveryStatus | null> {
   const db = env.DB;
-  if (canUseD1(db)) {
+  if (deliveryStateUsesD1(env)) {
     try {
       const row = await db
         .prepare("SELECT status FROM delivery_state WHERE key = ?")
@@ -201,10 +202,23 @@ export async function getDeliveryState(env: Env, key: string): Promise<DeliveryS
       await noteKvFallback(env.KV);
     }
   }
+  return (await readKvDeliveryState(env, key))?.status ?? null;
+}
+
+/**
+ * The KV-stored state of a delivery, with the time it was written (the lease
+ * stamp). Null when absent or unreadable.
+ */
+async function readKvDeliveryState(
+  env: Env,
+  key: string,
+): Promise<{ status: DeliveryStatus; at: number } | null> {
   const raw = await env.KV.get(key);
   if (!raw) return null;
   try {
-    return (JSON.parse(raw) as { status?: DeliveryStatus }).status ?? null;
+    const parsed = JSON.parse(raw) as { status?: DeliveryStatus; at?: unknown };
+    if (!parsed.status) return null;
+    return { status: parsed.status, at: Number(parsed.at) || 0 };
   } catch {
     return null;
   }
@@ -217,7 +231,8 @@ export type LeaseResult = "acquired" | "finished" | "busy";
  * `updated_at` the holder wrote). Renewals and terminal writes only apply
  * while the row still carries the holder's token, so a consumer whose lease
  * was taken over can neither overwrite the new holder's state nor go on as if
- * it still owned the delivery. Null token: KV fallback (no fencing).
+ * it still owned the delivery. Null token: KV (configured store or fallback),
+ * where a fresh lease stamp plays the same role without fencing.
  */
 export interface Lease {
   status: LeaseResult;
@@ -231,19 +246,18 @@ const FINISHED: ReadonlySet<DeliveryStatus | null> = new Set(["delivered", "dead
  * succeeds only for a new delivery, one waiting for a retry, or one whose
  * previous holder's lease expired — so two consumers can never dispatch the
  * same delivery at the same time. `finished` deliveries are done for good;
- * `busy` ones are being processed elsewhere right now.
+ * `busy` ones are being processed elsewhere right now. With KV the same stamp
+ * keeps a second consumer off a live lease, but there is no fencing token: a
+ * holder whose lease expired cannot tell that another one took over.
  */
 export async function acquireDelivery(env: Env, key: string): Promise<Lease> {
   const db = env.DB;
-  if (canUseD1(db)) {
+  if (deliveryStateUsesD1(env)) {
     try {
       // Finished while the table was missing (state lives in KV then).
       if (await kvFallbackActive(env.KV)) {
-        const kvState = await env.KV.get(key);
-        if (
-          kvState &&
-          FINISHED.has((JSON.parse(kvState) as { status?: DeliveryStatus }).status ?? null)
-        ) {
+        const kvState = await readKvDeliveryState(env, key);
+        if (kvState && FINISHED.has(kvState.status)) {
           return { status: "finished", token: null };
         }
       }
@@ -266,9 +280,13 @@ export async function acquireDelivery(env: Env, key: string): Promise<Lease> {
       await noteKvFallback(env.KV);
     }
   }
-  // KV: best effort (no atomic compare-and-set).
-  const prior = await getDeliveryState(env, key);
-  if (FINISHED.has(prior)) return { status: "finished", token: null };
+  // KV: no compare-and-set, but the lease stamp still keeps a second consumer
+  // off a delivery that is being sent right now.
+  const prior = await readKvDeliveryState(env, key);
+  if (prior && FINISHED.has(prior.status)) return { status: "finished", token: null };
+  if (prior?.status === "processing" && prior.at > Date.now() - LEASE_MS) {
+    return { status: "busy", token: null };
+  }
   await setDeliveryState(env, key, "processing");
   return { status: "acquired", token: null };
 }
@@ -276,14 +294,14 @@ export async function acquireDelivery(env: Env, key: string): Promise<Lease> {
 /**
  * Mark a delivery dead (its message left the DLQ) — atomically, and only
  * while it is neither finished nor held by a live lease: a copy of the same
- * delivery that finished or is still sending keeps its state. Without D1:
+ * delivery that finished or is still sending keeps its state. With KV:
  * best effort.
  */
 export async function markDeliveryDead(
   env: Env,
   key: string,
 ): Promise<"dead" | "finished" | "busy"> {
-  if (canUseD1(env.DB)) {
+  if (deliveryStateUsesD1(env)) {
     try {
       const now = Date.now();
       const result = await env.DB.prepare(
@@ -300,21 +318,37 @@ export async function markDeliveryDead(
       if (!isMissingTable(err)) throw err;
     }
   }
-  if (FINISHED.has(await getDeliveryState(env, key))) return "finished";
+  const prior = await readKvDeliveryState(env, key);
+  if (prior && FINISHED.has(prior.status)) return "finished";
+  // Same lease stamp as `acquireDelivery`: a live sender keeps its delivery.
+  if (prior?.status === "processing" && prior.at > Date.now() - LEASE_MS) return "busy";
   await setDeliveryState(env, key, "dead");
   return "dead";
 }
 
 /**
  * Extend a held lease; the new token, or null when the lease was lost (taken
- * over after expiry). Without D1 the lease cannot be fenced and stays valid.
+ * over after expiry). In KV there is no fencing token to renew: the lease
+ * stamp is refreshed instead, so another consumer does not take a delivery
+ * that is still being sent.
  */
 export async function renewLease(
   env: Env,
   key: string,
   token: number | null,
 ): Promise<number | null> {
-  if (token == null || !canUseD1(env.DB)) return token;
+  if (!deliveryStateUsesD1(env)) {
+    if (token == null) {
+      const prior = await readKvDeliveryState(env, key);
+      // At most every half lease: the stamp stays fresh with a read per
+      // renewal and a write per half lease, sparing the KV write quota.
+      if (prior?.status === "processing" && Date.now() - prior.at > LEASE_MS / 2) {
+        await setDeliveryState(env, key, "processing");
+      }
+    }
+    return token;
+  }
+  if (token == null) return token;
   const now = Math.max(Date.now(), token + 1);
   const result = await env.DB.prepare(
     `UPDATE delivery_state SET updated_at = ?
@@ -335,7 +369,7 @@ export async function finishLease(
   token: number | null,
   status: DeliveryStatus,
 ): Promise<boolean> {
-  if (token == null || !canUseD1(env.DB)) {
+  if (token == null || !deliveryStateUsesD1(env)) {
     await setDeliveryState(env, key, status);
     return true;
   }
@@ -354,7 +388,8 @@ function targetDoneKey(stateKey: string, targetKey: string): string {
 
 /**
  * Remember route × targets that need no further attempt for this delivery —
- * one D1 transaction for all of them (KV claims without D1 or its table).
+ * one D1 transaction for all of them (KV claims when the store is KV or D1
+ * lacks the table).
  * With `permanentFailure`, the delivery's permanent-failure marker is written
  * in the same transaction: a target is never skipped as finished while the
  * failure that finished it is forgotten (which would let the delivery end
@@ -371,7 +406,7 @@ export async function markTargetsDone(
   // at worst a marker without its target (the target is simply retried).
   if (opts.permanentFailure) keys.unshift(permanentFailureKey(stateKey));
   if (keys.length === 0) return;
-  if (canUseD1(env.DB)) {
+  if (deliveryStateUsesD1(env)) {
     const now = Date.now();
     const expires = now + LEDGER_TTL_SECONDS * 1000;
     try {
@@ -405,7 +440,7 @@ export function targetDoneChecker(
   env: Env,
   stateKey: string,
 ): (targetKey: string) => Promise<boolean> {
-  const store = idempotencyStore(env.DB, env.KV);
+  const store = deliveryClaimStore(env);
   let finished: Promise<Set<string> | null> | null = null;
   return async (targetKey) => {
     const key = targetDoneKey(stateKey, targetKey);
@@ -421,7 +456,7 @@ export function targetDoneChecker(
 
 /** The delivery's finished-target keys, or null where they are read one by one. */
 async function finishedTargets(env: Env, stateKey: string): Promise<Set<string> | null> {
-  if (!canUseD1(env.DB)) return null;
+  if (!deliveryStateUsesD1(env)) return null;
   const prefix = targetDoneKey(stateKey, "");
   try {
     const { results } = await env.DB.prepare(
@@ -442,7 +477,7 @@ function permanentFailureKey(stateKey: string): string {
 
 /** Whether an earlier attempt of this delivery left a target failed for good. */
 export function hadPermanentFailure(env: Env, stateKey: string): Promise<boolean> {
-  return idempotencyStore(env.DB, env.KV).has(permanentFailureKey(stateKey));
+  return deliveryClaimStore(env).has(permanentFailureKey(stateKey));
 }
 
 function byteLength(text: string): number {

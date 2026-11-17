@@ -16,7 +16,8 @@ import type { SendRecord } from "../lib/send-log";
 import { recordSendBatch } from "../lib/send-log-batch";
 import { explainRoute } from "../config/schema";
 import { chainLock, messageTracker, type MessageTracker } from "../lib/message-tracker";
-import { idempotencyStore, instanceScope, tenantScope } from "../lib/idempotency";
+import { instanceScope, tenantScope } from "../lib/idempotency";
+import { deliveryClaimStore, deliveryStateUsesD1 } from "../storage/state-store";
 import {
   loadGroups,
   groupAcceptsOwners,
@@ -254,7 +255,7 @@ async function deliverUpdate(
   const chainId = chain.id;
   const trackTarget = chain.target;
   const lockKey = `msg:lock:${chainId}:${trackTarget}`;
-  const lock = chainLock(env.DB, env.KV);
+  const lock = chainLock(env.DB, env.KV, deliveryStateUsesD1(env));
   let token: string | null = null;
   for (let attempt = 0; attempt < LOCK_ATTEMPTS && !token; attempt++) {
     token = await lock.acquire(lockKey, LOCK_TTL_SECONDS);
@@ -394,7 +395,7 @@ export async function dispatchEvent(
   const { tenantId, skipTarget, beforeTarget, afterTarget } = options;
   const loadedGroups = groups ?? (await loadGroups(env.KV));
   const groupById = new Map(loadedGroups.map((g) => [g.id, g]));
-  const tracker = messageTracker(env.DB, env.KV);
+  const tracker = messageTracker(env.DB, env.KV, deliveryStateUsesD1(env));
 
   // Message language is configured per group (Group.lang), not per route;
   // loaded when a message is built in it (a group nothing is sent to costs
@@ -677,7 +678,7 @@ export async function dispatchEvent(
               )}|${event.deliveryId}|${group.instance ?? groupId}|${outcome}`,
             )}`
           : null;
-        if (summaryKey && !(await idempotencyStore(env.DB, env.KV).claim(summaryKey, 86400))) {
+        if (summaryKey && !(await deliveryClaimStore(env).claim(summaryKey, 86400))) {
           continue;
         }
         claimed = summaryKey;
@@ -692,7 +693,7 @@ export async function dispatchEvent(
       }
       // Not posted (a failed or thrown send): a retry may try again.
       if (claimed) {
-        await idempotencyStore(env.DB, env.KV)
+        await deliveryClaimStore(env)
           .release(claimed)
           .catch(() => undefined);
       }
