@@ -42,7 +42,7 @@
     "markdownlint-cli": "^0.49.1",
     "prettier": "^3.9.6",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.7.0",
+    "typescript": "^7.0.2",
     "vitepress": "^1.6.4",
     "vue-router": "^5.2.0",
     "vue-tsc": "^3.0.0",
