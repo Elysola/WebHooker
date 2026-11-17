@@ -19,7 +19,7 @@ GitHub / Gitea webhook → Discord / Telegram / 飞书 分发服务。通过 Clo
 - **Web 配置控制台**（`/admin`）— 基于 Elysola UI，使用居中路由/分组对话框；通过 GitHub OAuth + 管理员白名单管理路由与分组、查看发送日志
 - **Discord Interactions Endpoint**（Ed25519 验签）支持 `/gh` 斜杠命令、消息右键菜单命令、PR 合并/关闭按钮与评论 modal
 - **Telegram `/gh` 命令**（login/logout/comment/merge/close），通过 Telegram webhook 接收，头像以链接预览卡片呈现
-- Cloudflare D1 存储配置（路由/分组）、发送日志、平台账号绑定、去重、投递状态与消息更新追踪 + KV 存储临时状态/缓存/安全令牌 + 可选 R2 存储超大负载
+- Cloudflare D1 存储配置（路由/分组）、发送日志、平台账号绑定、去重、投递状态与消息更新追踪（投递状态可用 `DELIVERY_STATE_STORE=kv` 存于 KV）+ KV 存储临时状态/缓存/安全令牌 + 可选 R2 存储超大负载
 - **Cloudflare Queues 异步投递** —— 绑定 `QUEUE` 时，已验签的 webhook 会入队到 `webhooker-delivery`，由消费者分发，带指数退避重试（5s/30s/2m/10m）与死信队列（`webhooker-delivery-dlq`）；超大负载暂存于 R2（`PAYLOAD` 绑定，回退 KV `queue:payload:*`）。未绑定则保持同步分发
 - 优雅降级（Discord 不可用时仅 webhook 模式）
 
@@ -39,7 +39,7 @@ GitHub Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 
 - **Cloudflare Worker** — HTTP 入口、签名验证、路由分发
 - **Interactions Endpoint** — HTTPS 回调（无 Discord Gateway 连接、无 Durable Object）；bot 保持离线，命令通过 API 注册
-- **KV** — 缓存 + 临时状态：Token 存储（`token:{userId}`）、OAuth state（`state:{hex}`）、管理员会话（`session:{id}`）、邀请、投递去重/投递状态/消息更新追踪的回退（`delivery:*`、`delivery-state:*`、`msg:*` 仅在 D1 不可用时使用）与消息更新锁（`msg:lock:*`）
+- **KV** — 缓存 + 临时状态：Token 存储（`token:{userId}`）、OAuth state（`state:{hex}`）、管理员会话（`session:{id}`）、邀请、投递去重/投递状态/消息更新追踪（`delivery:*`、`delivery-state:*`、`msg:*`，在 D1 不可用或 `DELIVERY_STATE_STORE=kv` 时使用）与消息更新锁（`msg:lock:*`）
 - **D1** — 路由/分组（`d1_routes`/`d1_groups`，含各分组的 webhook 密钥）、命名过滤器片段（`d1_fragments`）、发送日志（`send_logs`）、审计日志（`audit_logs`）、去重（`dedup_keys`）、投递状态（`delivery_state`）、消息更新追踪（`message_tracking`）、Discord↔GitHub 绑定（`discord_links`）、Telegram↔GitHub 绑定（`telegram_links`）
 - **Queue** — 绑定 `QUEUE` 时异步投递：`webhooker-delivery`（指数退避重试）+ 死信队列 `webhooker-delivery-dlq`；超大负载暂存于 R2（`PAYLOAD` 绑定，`webhooks/YYYY/MM/DD/*.json`，回退 KV `queue:payload:*`）
 
@@ -79,6 +79,7 @@ bun run cf:dev       # 先构建，再用 wrangler dev 在本地运行 worker
 | `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证                      |
 | `ALLOW_SELF_SIGNUP`         | 设为 `1` 时，无权限的 GitHub 用户首次登录自动获得个人分组（默认关闭）         |
 | `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数（默认 90）                                       |
+| `DELIVERY_STATE_STORE`      | 设为 `kv` 时 webhook 投递状态（去重、租约、目标台账、消息追踪）存放于 KV 而非 D1（默认 `d1`） |
 | `NUXT_PUBLIC_DOCS_URL`      | 可选；落地页使用的文档站点 URL                                                |
 | `NUXT_PUBLIC_REPO_URL`      | 可选；落地页使用的 GitHub 仓库 URL                                            |
 | `NUXT_PUBLIC_LEGAL_CONTACT` | 可选；`/terms` 与 `/privacy` 页面展示的联系方式                               |

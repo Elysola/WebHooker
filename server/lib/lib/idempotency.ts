@@ -118,10 +118,14 @@ function withKvFallback(
   };
 }
 
-export function idempotencyStore(db: D1Database, kv: KVNamespace): IdempotencyStore {
-  if (canUseD1(db)) return withKvFallback(d1IdempotencyStore(db), kvIdempotencyStore(kv), kv);
-  // Without D1, claims live in KV: marked, so a D1 binding added later still
-  // honors the ones not expired yet.
+/** D1 when the binding can take it, else KV (no binding, or a caller that wants KV). */
+export function idempotencyStore(
+  db: D1Database | undefined | null,
+  kv: KVNamespace,
+): IdempotencyStore {
+  if (canUseD1(db)) return withKvFallback(d1IdempotencyStore(db!), kvIdempotencyStore(kv), kv);
+  // Without D1, or with a caller that wants KV: claims live in KV, marked, so
+  // D1 still honors the ones not expired yet.
   const store = kvIdempotencyStore(kv);
   return {
     ...store,

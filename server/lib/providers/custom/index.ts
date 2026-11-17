@@ -2,7 +2,8 @@ import type { Env, WebhookEvent } from "../../types";
 import type { Provider } from "../types";
 import { hmacSha256Hex, timingSafeEqual } from "../hmac";
 import { verifySignature } from "../github/verify";
-import { claimOnce, idempotencyStore } from "../../lib/idempotency";
+import { claimOnce } from "../../lib/idempotency";
+import { deliveryClaimStore } from "../../storage/state-store";
 
 const REPLAY_WINDOW_SECONDS = 300;
 /** How long an accepted nonce is remembered (longer than the signature window). */
@@ -63,7 +64,7 @@ async function verifyReplayProtected(
   const key = await replayNonceKey(secret, nonce);
   let state;
   try {
-    state = await claimOnce(idempotencyStore(env.DB, env.KV), key, NONCE_CLAIM_SECONDS);
+    state = await claimOnce(deliveryClaimStore(env), key, NONCE_CLAIM_SECONDS);
   } catch {
     // A storage failure says nothing about the signature.
     throw new ReplayPendingError("Replay protection is temporarily unavailable");

@@ -209,10 +209,19 @@ function withKvFallback(
   };
 }
 
-export function messageTracker(db: D1Database, kv: KVNamespace): MessageTracker {
-  if (canUseD1(db)) return withKvFallback(d1MessageTracker(db), kvMessageTracker(kv), kv, db);
-  // Without D1, tracking lives in KV: marked, so a D1 binding added later
-  // still finds the messages to edit.
+/**
+ * Message tracking of the delivery pipeline. `useD1` is the configured store
+ * (`DELIVERY_STATE_STORE`): KV when it is off, marked so a deployment switched
+ * back to D1 still finds the messages to edit.
+ */
+export function messageTracker(
+  db: D1Database,
+  kv: KVNamespace,
+  useD1: boolean = canUseD1(db),
+): MessageTracker {
+  if (useD1) return withKvFallback(d1MessageTracker(db), kvMessageTracker(kv), kv, db);
+  // Without D1 — or with the delivery store set to KV — tracking lives in KV:
+  // marked, so D1 still finds the messages to edit.
   const tracker = kvMessageTracker(kv);
   return {
     ...tracker,
@@ -231,7 +240,8 @@ export function messageTracker(db: D1Database, kv: KVNamespace): MessageTracker 
  * Serializes the updates of one message chain. With D1 the lock is a
  * `dedup_keys` row taken by an atomic conditional UPSERT (taken over only once
  * expired) and released only by its holder, identified by the claim time it
- * wrote. Without D1 it degrades to a best-effort KV marker.
+ * wrote. Without D1 — or with the delivery store set to KV — it degrades to a
+ * best-effort KV marker.
  */
 export interface ChainLock {
   /** A holder token, or null while someone else holds the lock. */
@@ -239,7 +249,11 @@ export interface ChainLock {
   release(key: string, token: string): Promise<void>;
 }
 
-export function chainLock(db: D1Database, kv: KVNamespace): ChainLock {
+export function chainLock(
+  db: D1Database,
+  kv: KVNamespace,
+  useD1: boolean = canUseD1(db),
+): ChainLock {
   const kvLock: ChainLock = {
     async acquire(key, ttlSeconds) {
       if (await kv.get(key)) return null;
@@ -251,9 +265,12 @@ export function chainLock(db: D1Database, kv: KVNamespace): ChainLock {
       if ((await kv.get(key)) === token) await kv.delete(key);
     },
   };
-  if (!canUseD1(db)) return kvLock;
+  if (!useD1) return kvLock;
   return {
     async acquire(key, ttlSeconds): Promise<string | null> {
+      // A lock taken while delivering through KV (before switching back) is
+      // honored too: another holder would edit the same message chain.
+      if ((await kvFallbackActive(kv)) && (await kv.get(key))) return null;
       const now = Date.now();
       try {
         const result = await db

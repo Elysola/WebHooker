@@ -38,4 +38,4 @@
 
 ## 数据存储在哪里？
 
-配置存于 D1（`d1_routes`/`d1_groups`，在内存中最多缓存 60 秒）；webhook 去重、投递状态与消息更新追踪同样存于 D1（KV 回退）；发送/审计日志与平台↔GitHub 绑定存于 D1；超大负载可选存于 R2。见[存储布局](./storage#存储决策)。
+配置存于 D1（`d1_routes`/`d1_groups`，在内存中最多缓存 60 秒）；webhook 去重、投递状态与消息更新追踪同样存于 D1（KV 回退，可选 `DELIVERY_STATE_STORE=kv` 切换到 KV）；发送/审计日志与平台↔GitHub 绑定存于 D1；超大负载可选存于 R2。见[存储布局](./storage#存储决策)。

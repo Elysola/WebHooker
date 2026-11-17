@@ -38,4 +38,4 @@ No — the worker requires the KV and D1 bindings declared in `wrangler.jsonc` a
 
 ## Where is data stored?
 
-Configuration lives in D1 (`d1_routes`/`d1_groups`, cached in memory for at most 60 seconds); webhook dedup, delivery state and message-update tracking also live in D1 with KV fallback; send/audit logs and platform↔GitHub links live in D1. R2 optionally parks oversized payloads. See [Storage Layout](./storage#storage-decisions).
+Configuration lives in D1 (`d1_routes`/`d1_groups`, cached in memory for at most 60 seconds); webhook dedup, delivery state and message-update tracking live in D1 too, with KV fallback and an opt-in `DELIVERY_STATE_STORE=kv`; send/audit logs and platform↔GitHub links live in D1. R2 optionally parks oversized payloads. See [Storage Layout](./storage#storage-decisions).

@@ -11,6 +11,7 @@ import { recordAudit } from "./lib/audit";
 import { cfEnv, cfWaitUntil, headersFrom } from "./cf";
 import { log } from "./lib/log";
 import { claimOnce, confirmClaim, deliveryKey, idempotencyStore } from "./lib/idempotency";
+import { deliveryClaimStore } from "./storage/state-store";
 import { newCorrelationId } from "./lib/correlation";
 import {
   deliveryStateKey,
@@ -131,7 +132,7 @@ export async function processWebhook(
   // otherwise they are given back, so the sender's retry is not refused. A
   // claim that could not be given back is never mistaken for an accepted
   // event: a retry finds it unconfirmed and is asked to come back later.
-  const claims = idempotencyStore(env.DB, env.KV);
+  const claims = deliveryClaimStore(env);
   const held: { key: string; ttl: number }[] = [];
   const nonce = headers["x-webhooker-nonce"];
   if (provider.id === "custom" && nonce && headers["x-webhooker-timestamp"]) {
@@ -217,17 +218,19 @@ export async function processWebhook(
       // Done once per installation, on record as long as delivery state is
       // kept: a redelivery after the dedup claim lapsed (minutes) must not
       // redo a binding an admin undid since. Recorded only once it succeeded,
-      // so a provisioning that failed midway is completed by the retry.
+      // so a provisioning that failed midway is completed by the retry. Kept
+      // in D1 with the bindings it guards, whichever store deliveries use.
       const doneKey = `installation-provisioned:${event.installationId}`;
+      const records = idempotencyStore(env.DB, env.KV);
       try {
-        if (!(await claims.has(doneKey))) {
+        if (!(await records.has(doneKey))) {
           const group = await ensureInstallationGroup(
             env.KV,
             event.installationId,
             account,
             env.DB,
           );
-          await claims.claim(doneKey, PROVISIONED_TTL_SECONDS);
+          await records.claim(doneKey, PROVISIONED_TTL_SECONDS);
           if (group) {
             await recordAudit(env.DB, {
               ts: Date.now(),
