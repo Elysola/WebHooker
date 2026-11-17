@@ -43,22 +43,23 @@ WebHooker 的运行需要若干密钥。本地开发时放入 `.dev.vars`，生�
 
 ### 可选密钥
 
-| 变量                        | 说明                                                                                                      | 默认值                   |
-| --------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `DISCORD_PUBLIC_KEY`        | Discord 应用的公钥（开发者门户获取），交互功能必需                                                        | 未设置时交互返回 401     |
-| `DISCORD_APPLICATION_ID`    | Discord 应用 ID；省略时自动获取                                                                           | 自动获取                 |
-| `TELEGRAM_WEBHOOK_SECRET`   | `POST /telegram/webhook` 验签密钥（X-Telegram-Bot-Api-Secret-Token）                                      | 由 `TELEGRAM_TOKEN` 派生 |
-| `FEISHU_ENCRYPT_KEY`        | 飞书事件 Encrypt Key：校验 `X-Lark-Signature` 并解密加密回调                                              | 未设置                   |
-| `FEISHU_VERIFICATION_TOKEN` | 飞书事件 Verification Token：与每个回调中的 token 比对                                                    | 未设置                   |
-| `TELEGRAM_RICH_HEADER_HOST` | 外部 rich-header 服务的基础 URL；未设置时使用内置 `GET /api/richheader` 提供 Telegram 头像卡片            | 内置 `/api/richheader`   |
-| `BASE_URL`                  | worker 的公网地址，用于 OAuth 回调与 Telegram webhook 同步                                                | 未设置——生产环境必填     |
-| `ADMIN_USER_IDS`            | 允许访问 WebUI 的 GitHub 用户 ID（或登录名），逗号分隔；建议写数字 ID——登录名会绑定到第一个用它登录的账号 | 未设置时 WebUI 关闭      |
-| `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证并授予完整权限                                    | 关闭                     |
-| `ALLOW_SELF_SIGNUP`         | 开启（`1`/`true`）后，没有任何分组权限的 GitHub 用户首次登录会自动获得隔离的个人分组而非 403              | 关闭                     |
-| `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数                                                                              | `90`                     |
-| `NUXT_PUBLIC_DOCS_URL`      | 落地页使用的文档站 URL（客户端运行时配置）                                                                | 落地页默认值             |
-| `NUXT_PUBLIC_REPO_URL`      | 落地页使用的 GitHub 仓库 URL                                                                              | 落地页默认值             |
-| `NUXT_PUBLIC_LEGAL_CONTACT` | `/terms` 与 `/privacy` 页面展示的联系方式                                                                 | 未设置时显示占位文本     |
+| 变量                        | 说明                                                                                                                       | 默认值                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `DISCORD_PUBLIC_KEY`        | Discord 应用的公钥（开发者门户获取），交互功能必需                                                                         | 未设置时交互返回 401     |
+| `DISCORD_APPLICATION_ID`    | Discord 应用 ID；省略时自动获取                                                                                            | 自动获取                 |
+| `TELEGRAM_WEBHOOK_SECRET`   | `POST /telegram/webhook` 验签密钥（X-Telegram-Bot-Api-Secret-Token）                                                       | 由 `TELEGRAM_TOKEN` 派生 |
+| `FEISHU_ENCRYPT_KEY`        | 飞书事件 Encrypt Key：校验 `X-Lark-Signature` 并解密加密回调                                                               | 未设置                   |
+| `FEISHU_VERIFICATION_TOKEN` | 飞书事件 Verification Token：与每个回调中的 token 比对                                                                     | 未设置                   |
+| `TELEGRAM_RICH_HEADER_HOST` | 外部 rich-header 服务的基础 URL；未设置时使用内置 `GET /api/richheader` 提供 Telegram 头像卡片                             | 内置 `/api/richheader`   |
+| `BASE_URL`                  | worker 的公网地址，用于 OAuth 回调与 Telegram webhook 同步                                                                 | 未设置——生产环境必填     |
+| `ADMIN_USER_IDS`            | 允许访问 WebUI 的 GitHub 用户 ID（或登录名），逗号分隔；建议写数字 ID——登录名会绑定到第一个用它登录的账号                  | 未设置时 WebUI 关闭      |
+| `DEBUG_MODE`                | 仅本地开发：精确设为 `true` 时跳过全部 `/admin` 身份验证并授予完整权限                                                     | 关闭                     |
+| `ALLOW_SELF_SIGNUP`         | 开启（`1`/`true`）后，没有任何分组权限的 GitHub 用户首次登录会自动获得隔离的个人分组而非 403                               | 关闭                     |
+| `AUDIT_RETENTION_DAYS`      | 定时清理时审计日志的保留天数                                                                                               | `90`                     |
+| `DELIVERY_STATE_STORE`      | webhook 投递状态存放位置：`d1`（默认）或 `kv`。KV 在边缘响应，但免费版每日仅约 1000 次写——见[存储决策](./storage#存储决策) | `d1`                     |
+| `NUXT_PUBLIC_DOCS_URL`      | 落地页使用的文档站 URL（客户端运行时配置）                                                                                 | 落地页默认值             |
+| `NUXT_PUBLIC_REPO_URL`      | 落地页使用的 GitHub 仓库 URL                                                                                               | 落地页默认值             |
+| `NUXT_PUBLIC_LEGAL_CONTACT` | `/terms` 与 `/privacy` 页面展示的联系方式                                                                                  | 未设置时显示占位文本     |
 
 ## Web 控制台
 

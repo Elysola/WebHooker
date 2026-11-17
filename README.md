@@ -19,7 +19,7 @@ GitHub / Gitea webhook → Discord / Telegram / Feishu dispatcher. Receives webh
 - **Web UI config console** (`/admin`) — Elysola UI-based console with centered route/group dialogs; manage routes and groups with GitHub OAuth + admin whitelist, view send logs
 - **Discord Interactions Endpoint** (Ed25519-verified) for `/gh` slash commands, message context-menu commands, PR merge/close buttons, and comment modals
 - **Telegram `/gh` commands** (login/logout/comment/merge/close) via the Telegram webhook, with avatar link-preview cards
-- Cloudflare D1 for config (routes/groups), send logs, platform account links, dedup, delivery state and message tracking + KV for ephemeral state/cache/security tokens, + optional R2 for oversized payloads
+- Cloudflare D1 for config (routes/groups), send logs, platform account links, dedup, delivery state and message tracking (or KV for the delivery state, with `DELIVERY_STATE_STORE=kv`) + KV for ephemeral state/cache/security tokens, + optional R2 for oversized payloads
 - **Async delivery via Cloudflare Queues** — when the `QUEUE` binding is present, verified webhooks are enqueued to `webhooker-delivery` and dispatched by a consumer with exponential retry backoff (5s/30s/2m/10m) and a dead-letter queue (`webhooker-delivery-dlq`); oversized payloads are parked in R2 (`PAYLOAD` binding, falling back to KV `queue:payload:*`). Without the binding, dispatch stays inline
 - Graceful degradation (webhook-only mode if Discord unavailable)
 
@@ -39,7 +39,7 @@ GitHub Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 
 - **Cloudflare Worker** — HTTP ingress, signature verification, routing, platform dispatch
 - **Interactions Endpoint** — HTTPS callback (no Discord Gateway connection, no Durable Object); the bot stays offline and commands are registered via the API
-- **KV** — cache + ephemeral state: token storage (`token:{userId}`), OAuth state (`state:{hex}`), admin sessions (`session:{id}`), invites, delivery dedup/state/message-tracking **fallback** (`delivery:*`, `delivery-state:*`, `msg:*` used only when D1 is unavailable) and message-update locks (`msg:lock:*`)
+- **KV** — cache + ephemeral state: token storage (`token:{userId}`), OAuth state (`state:{hex}`), admin sessions (`session:{id}`), invites, delivery dedup/state/message-tracking (`delivery:*`, `delivery-state:*`, `msg:*`, used when D1 is unavailable or `DELIVERY_STATE_STORE=kv`) and message-update locks (`msg:lock:*`)
 - **D1** — source of truth for routes/groups (`d1_routes`/`d1_groups`, including each group's webhook secret), named filter fragments (`d1_fragments`), send logs (`send_logs`), audit logs (`audit_logs`), dedup (`dedup_keys`), delivery state (`delivery_state`), message-update tracking (`message_tracking`), Discord↔GitHub links (`discord_links`), Telegram↔GitHub links (`telegram_links`)
 - **Queue** — async delivery when `QUEUE` is bound: `webhooker-delivery` (exponential retry) + DLQ `webhooker-delivery-dlq`; oversized payloads parked in R2 (`PAYLOAD` binding, `webhooks/YYYY/MM/DD/*.json`, falling back to KV `queue:payload:*`)
 
@@ -79,6 +79,7 @@ bun run cf:dev       # Build, then serve the worker locally with wrangler dev
 | `DEBUG_MODE`                | Local development only: set to exact `true` to bypass all `/admin` authentication                                          |
 | `ALLOW_SELF_SIGNUP`         | `1` to give access-less GitHub users a personal group on first login (default off)                                         |
 | `AUDIT_RETENTION_DAYS`      | Audit-log retention in days for the scheduled cleanup (default 90)                                                         |
+| `DELIVERY_STATE_STORE`      | `kv` keeps webhook delivery state (dedup, leases, target ledger, message tracking) in KV instead of D1 (default `d1`)      |
 | `NUXT_PUBLIC_DOCS_URL`      | Optional docs site URL used by the landing page                                                                            |
 | `NUXT_PUBLIC_REPO_URL`      | Optional GitHub repo URL used by the landing page                                                                          |
 | `NUXT_PUBLIC_LEGAL_CONTACT` | Optional contact shown on `/terms` and `/privacy`                                                                          |

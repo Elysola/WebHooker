@@ -22,7 +22,7 @@ GitHub / Gitea Webhook → Cloudflare Worker (Nuxt 4 / Nitro)
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cloudflare Worker**     | HTTP 入口、签名验证、投递去重、事件解析、路由匹配、平台分发                                                                                                                                                                                                                   |
 | **Interactions Endpoint** | 验证 Ed25519 签名并处理 `/gh` 交互（斜杠命令、右键菜单、按钮、modal）                                                                                                                                                                                                         |
-| **KV**                    | Token 存储 (`token:{userId}`)、OAuth 状态 (`state:{hex}`)、管理员会话、邀请、投递去重/投递状态/消息更新追踪的回退（`delivery:*`、`delivery-state:*`、`msg:*`，仅在 D1 不可用时使用）、消息更新锁 (`msg:lock:*`)                                                               |
+| **KV**                    | Token 存储 (`token:{userId}`)、OAuth 状态 (`state:{hex}`)、管理员会话、邀请、D1 不可用或 `DELIVERY_STATE_STORE=kv` 时的投递去重/投递状态/消息更新追踪（`delivery:*`、`delivery-state:*`、`msg:*`）、消息更新锁 (`msg:lock:*`)                                                 |
 | **D1**                    | 路由/分组 (`d1_routes`/`d1_groups`)、发送日志 (`send_logs`)、审计日志 (`audit_logs`)、去重 (`dedup_keys`)、投递状态 (`delivery_state`)、消息追踪 (`message_tracking`)、Discord↔GitHub 绑定 (`discord_links`)、Telegram↔GitHub 绑定 (`telegram_links`)，超大负载可选的 R2 存储 |
 
 ### 数据流

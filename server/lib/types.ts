@@ -31,6 +31,12 @@ export interface Env {
   ALLOW_SELF_SIGNUP?: string;
   /** Audit log retention in days (default 90). */
   AUDIT_RETENTION_DAYS?: string;
+  /**
+   * Where webhook delivery state is kept: `d1` (default) or `kv`. D1 allows
+   * far more free writes but each one is a database round trip; KV answers at
+   * the edge and is best effort (no compare-and-set).
+   */
+  DELIVERY_STATE_STORE?: string;
   ASSETS?: Fetcher;
   KV: KVNamespace;
   DB: D1Database;
