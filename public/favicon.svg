@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="WebHooker">
-  <rect width="64" height="64" rx="14" fill="#4f46e5"/>
-  <g fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M41 23 V35.5 A10.5 10.5 0 0 1 20 35.5 L28 25.5"/>
-  </g>
-  <circle cx="41" cy="18" r="4.5" fill="#fff"/>
-</svg>

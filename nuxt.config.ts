@@ -22,7 +22,9 @@ export default defineNuxtConfig({
     head: {
       title: "WebHooker",
       link: [
-        { rel: "icon", type: "image/svg+xml", href: "/logo.svg" },
+        { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32.png" },
+        { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16.png" },
+        { rel: "apple-touch-icon", sizes: "256x256", href: "/apple-touch-icon.png" },
         {
           rel: "stylesheet",
           href: "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap",
